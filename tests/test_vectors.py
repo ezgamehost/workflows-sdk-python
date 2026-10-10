@@ -114,3 +114,24 @@ def test_codec() -> None:
                 encode_value(value)
         else:
             assert encode_value(value) == c["encoded"], c["tag"]
+
+
+def test_errors_survive_decode_and_encode() -> None:
+    from ezgh_workflows._runtime.errors import decode_error, encode_error
+
+    for c in vector("errors")["cases"]:
+        assert encode_error(decode_error(c["wire"])) == c["wire"]
+
+
+def test_invocations_parse_and_unknown_fields_are_ignored() -> None:
+    import json
+
+    from ezgh_workflows._runtime.invocation import InvalidInvocation, parse_invocation
+
+    msgs = vector("messages")
+    for inv in [*msgs["invocation"]["valid"], *(c["invocation"] for c in vector("unknown-fields")["cases"])]:
+        parsed = parse_invocation(json.dumps(inv))
+        assert (parsed["invocationId"], parsed["kind"]) == (inv["invocationId"], inv["kind"])
+    for inv in msgs["invocation"]["invalid"]:
+        with pytest.raises(InvalidInvocation):
+            parse_invocation(json.dumps(inv))

@@ -172,7 +172,7 @@ run = client.start(created["app"]["id"], "onboarding", {"userId": "u_1"}, run_ke
 Apps (`create_app`, `get_app`, `list_apps`, `sync`, `rotate_secret`), runs (`start`, `get`, `cancel`,
 `retry`, `output`, `input`, `step_output`, `events`), callbacks (`complete_callback`) and schedules
 (`create_schedule`, `get_schedule`, `list_schedules`, `update_schedule`, `pause_schedule`,
-`resume_schedule`, `delete_schedule`, `trigger_schedule`). `AsyncClient` has the same methods as
+`resume_schedule`, `delete_schedule`, `trigger_schedule`, `schedule_input`). `AsyncClient` has the same methods as
 coroutines. Responses are `TypedDict`s with the API's camelCase keys. Errors raise
 `WorkflowsApiError` with `status`, `code` and `retry_after_seconds`; 429, 503 and network errors are
 retried (`retries`, default 3), and writes are resent with the same `Idempotency-Key`.

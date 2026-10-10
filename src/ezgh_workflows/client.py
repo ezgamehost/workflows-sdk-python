@@ -421,6 +421,10 @@ class Client:
     def delete_schedule(self, schedule_id: str) -> None:
         self._call("DELETE", f"/schedules/{_q(schedule_id)}")
 
+    def schedule_input(self, schedule_id: str) -> Any:
+        """The schedule's input (null when it has none)."""
+        return self._call("GET", f"/schedules/{_q(schedule_id)}/payloads/input")
+
     def trigger_schedule(self, schedule_id: str, *, idempotency_key: str | None = None) -> Run:
         """Starts a run now. The run is derived from the Idempotency-Key, so the same key gives the
         same run (201 new, 200 existing)."""
@@ -571,6 +575,9 @@ class AsyncClient:
 
     async def delete_schedule(self, schedule_id: str) -> None:
         await asyncio.to_thread(self._c.delete_schedule, schedule_id)
+
+    async def schedule_input(self, schedule_id: str) -> Any:
+        return await asyncio.to_thread(self._c.schedule_input, schedule_id)
 
     async def trigger_schedule(self, schedule_id: str, *, idempotency_key: str | None = None) -> Run:
         return await asyncio.to_thread(self._c.trigger_schedule, schedule_id, idempotency_key=idempotency_key)

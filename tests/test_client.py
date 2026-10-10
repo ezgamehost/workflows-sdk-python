@@ -130,6 +130,9 @@ def test_app_schedule_and_callback_shapes(rec: Recorder) -> None:
     assert rec.calls[-1][2]["Idempotency-Key"] == "t1" and rec.calls[-1][1] == BASE + "/schedules/s/trigger"
     client().list_schedules(cursor="c/1", limit=10)
     assert rec.calls[-1][1] == BASE + "/schedules?cursor=c%2F1&limit=10"
+    rec.answers.insert(0, (200, {"x": 1}))
+    assert client().schedule_input("s") == {"x": 1}
+    assert rec.calls[-1][1] == BASE + "/schedules/s/payloads/input"
     client().delete_schedule("s")
     assert rec.calls[-1][0] == "DELETE"
 

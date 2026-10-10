@@ -3,6 +3,7 @@ workflows-stack; exits 1 at the first failure."""
 
 import json
 import os
+import re
 import sys
 import time
 import urllib.request
@@ -12,7 +13,7 @@ from typing import Any, NoReturn
 
 from ezgh_workflows import Client, WorkflowsApiError
 from ezgh_workflows.client import Run, RunStep
-from ezgh_workflows.protocol import child_run_id, scheduled_run_id, triggered_run_id
+from ezgh_workflows.protocol import child_run_id, scheduled_run_id, shard_of, triggered_run_id
 
 API = os.environ.get("E2E_API", "http://127.0.0.1:6100")
 APP = os.environ.get("E2E_APP", "http://127.0.0.1:3200")
@@ -215,6 +216,52 @@ def main() -> None:
     )
     print("ok   parallel fan-out")
 
+    # A callback completed over its public URL.
+    approval = client.start(APP_ID, "e2e-approval")
+    url: str | None = None
+    end = time.monotonic() + 60
+    while not url and time.monotonic() < end:
+        url = state().get("callbackUrl")
+        if not url:
+            time.sleep(0.25)
+    # The URL is endpoints.api (the stack's PUBLIC_BASE_URL: an https origin, even locally) plus
+    # /public/v1/callbacks/<token>, the token on the run's shard; the driver posts that path to the
+    # local API.
+    m = re.fullmatch(r"https://[^/]+/public/v1/callbacks/([0-9a-f]{3})\.[A-Za-z0-9_-]{43}", url or "")
+    check(m and int(m.group(1), 16) == shard_of(approval["id"]), "e2e-approval published a callback URL", url)
+    assert url is not None
+    url = API + "/public/v1/callbacks/" + url.split("/public/v1/callbacks/", 1)[1]
+    check(post(url, {"approved": True}) == 200, "completing the callback succeeds")
+    check(post(url, {"approved": True}) == 200, "repeating the same completion answers 200")
+    check(post(url, {"approved": False}) == 409, "a different completion is 409 callback_completed")
+    approved = until(approval["id"], terminal)
+    check(
+        approved["status"] == "completed" and client.output(approved["id"]) == {"approved": True},
+        "e2e-approval resumes with the callback's body",
+        approved,
+    )
+    print("ok   callback by HTTP")
+
+    # The pull worker announces e2e-pulled on its polls: a start is 409 workflow_not_announced until
+    # one lands; then the run completes on the worker.
+    end = time.monotonic() + 90
+    while True:
+        try:
+            started = client.start(PULL_APP_ID, "e2e-pulled", {"n": 7})
+            break
+        except WorkflowsApiError as e:
+            check(
+                e.code == "workflow_not_announced" and time.monotonic() < end,
+                "the pull worker announced e2e-pulled",
+                repr(e),
+            )
+            time.sleep(0.5)
+    pulled = until(started["id"], terminal)
+    check(
+        pulled["status"] == "completed" and client.output(pulled["id"]) == 49, "the pull worker runs e2e-pulled", pulled
+    )
+    print("ok   pull worker")
+
     parent = until(client.start(APP_ID, "e2e-parent", {"n": 4})["id"], terminal)
     check(
         parent["status"] == "completed" and client.output(parent["id"]) == 41,
@@ -232,31 +279,6 @@ def main() -> None:
         child,
     )
     print("ok   child workflow")
-
-    # A callback completed over its public URL.
-    approval = client.start(APP_ID, "e2e-approval")
-    url: str | None = None
-    end = time.monotonic() + 60
-    while not url and time.monotonic() < end:
-        url = state().get("callbackUrl")
-        if not url:
-            time.sleep(0.25)
-    check(
-        url and url.startswith(f"{API}/public/v1/callbacks/"),
-        "e2e-approval published a callback URL on the API host",
-        url,
-    )
-    assert url is not None
-    check(post(url, {"approved": True}) == 200, "completing the callback succeeds")
-    check(post(url, {"approved": True}) == 200, "repeating the same completion answers 200")
-    check(post(url, {"approved": False}) == 409, "a different completion is 409 callback_completed")
-    approved = until(approval["id"], terminal)
-    check(
-        approved["status"] == "completed" and client.output(approved["id"]) == {"approved": True},
-        "e2e-approval resumes with the callback's body",
-        approved,
-    )
-    print("ok   callback by HTTP")
 
     # A schedule every minute: the first firing starts a run whose ID derives from the scheduled time.
     sched = client.create_schedule(
@@ -299,20 +321,6 @@ def main() -> None:
     except WorkflowsApiError as e:
         check(e.status == 404, "a deleted schedule is 404", repr(e))
     print("ok   schedule")
-
-    # The pull worker announces e2e-pulled on its polls; then a run of the pull app completes.
-    end = time.monotonic() + 60
-    while True:
-        a = client.get_app(PULL_APP_ID)
-        if any(w.get("name") == "e2e-pulled" for w in a["workflows"]):
-            break
-        check(time.monotonic() < end, "the pull worker announced e2e-pulled", a)
-        time.sleep(0.5)
-    pulled = until(client.start(PULL_APP_ID, "e2e-pulled", {"n": 7})["id"], terminal)
-    check(
-        pulled["status"] == "completed" and client.output(pulled["id"]) == 49, "the pull worker runs e2e-pulled", pulled
-    )
-    print("ok   pull worker")
 
     print("PASSED")
 

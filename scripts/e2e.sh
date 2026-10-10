@@ -45,7 +45,7 @@ wait_for() {
   done
   echo "timed out waiting for $1" >&2; return 1
 }
-for port in 3200 4100 6100 6150 6200 6250; do
+for port in 3200 4100 6100 6150 6200 6250 9090; do
   if (exec 3<>"/dev/tcp/127.0.0.1/$port") 2>/dev/null; then
     echo "port $port is in use (a previous run still shutting down?); free it and retry" >&2; exit 1
   fi

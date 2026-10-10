@@ -15,6 +15,7 @@ from ._version import SDK_VERSION as __version__
 from .client import AsyncClient, Client, WorkflowsApiError
 from .protocol import PROTOCOL_VERSIONS
 from .serve import serve
+from .worker import Worker
 
 __all__ = [
     "PROTOCOL_VERSIONS",
@@ -32,6 +33,7 @@ __all__ = [
     "StepTimeoutError",
     "SyncCallback",
     "SyncContext",
+    "Worker",
     "Workflow",
     "WorkflowError",
     "WorkflowsApiError",

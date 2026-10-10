@@ -123,6 +123,41 @@ Every request's `EZGH-Signature` is verified in constant time and refused when i
 than 5 minutes from now. The invocation's deadline is local (receipt time plus the engine's budget),
 so clock skew doesn't matter.
 
+## Pull workers
+
+A pull app's workflows run on your own machines: a `Worker` long-polls EZGH for tasks with an API
+key, so it needs no public endpoint, and its steps may run for hours (heartbeats keep the
+invocation alive).
+
+```python
+from ezgh_workflows import Worker
+
+worker = Worker(
+    api_key=os.environ["EZGH_API_KEY"],     # workflows.workers.poll (and workflows.apps.sync to announce)
+    organization_id=ORG,
+    project_id=PROJECT,
+    app=PULL_APP_ID,                        # client.create_app("reports", kind="pull", queue="default")
+    queue="default",
+    workflows=[onboarding, nightly],
+    concurrency=10,                         # invocations at once
+    max_tasks=1,                            # tasks per poll (1-10)
+)
+worker.run_sync()                           # or: await worker.run(); worker.stop() from anywhere
+```
+
+- Every poll announces the worker's workflows; the app's list is what live workers announced in the
+  last 10 minutes.
+- While an invocation runs, the worker heartbeats every `heartbeat_interval` seconds (default 20; the
+  engine's timeout is 60). When the run is cancelled, the running step's `ctx.step.cancelled()`
+  turns true, so a long step can stop early.
+- `stop()`, SIGTERM or SIGINT stop polling at once; running invocations get `shutdown_grace` seconds
+  (default 30), and the engine re-dispatches anything abandoned after its heartbeat timeout.
+- A poll answered 401 (twice) or 403 raises `WorkflowsApiError` from `run()`; 429, 5xx and network
+  errors are retried with jittered backoff up to `backoff_max` seconds.
+- **Dev mode:** `Worker.dev(api_key=..., organization_id=..., project_id=..., workflows=[...])`
+  finds or creates the pull app `dev-<user>` with the queue of the same name, so two laptops never
+  take each other's runs.
+
 ## Client
 
 ```python
@@ -158,7 +193,7 @@ uv sync
 uv run ruff check . && uv run ruff format --check .
 uv run mypy
 uv run pytest
-scripts/conformance.sh ~/code/workflows-stack    # workflows-stack's conformance harness
+scripts/conformance.sh ~/code/workflows-stack    # workflows-stack's conformance harness (push and pull)
 ```
 
 The protocol vectors in `tests/vectors` are workflows-stack's, vendored verbatim by

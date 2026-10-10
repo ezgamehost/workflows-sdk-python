@@ -37,6 +37,7 @@ class CheckpointFailed(Exception):
 
 
 MAX_BACKOFF = 5.0
+MAX_CALL_SECONDS = 120.0
 
 
 def retry_after_seconds(res: Response) -> float | None:
@@ -91,8 +92,10 @@ class HttpLive:
 
         attempt = 0
         while True:
-            timeout = 30.0 if self.deadline is None else self.deadline - self.now()
-            if timeout <= 0:
+            left = 30.0 if self.deadline is None else self.deadline - self.now()
+            # One request waits at most MAX_CALL_SECONDS: a pull invocation's deadline can be hours away.
+            timeout = min(left, MAX_CALL_SECONDS)
+            if left <= 0:
                 raise failed(f"No time left for {what}: {last or 'the deadline passed'}")
             wait: float | None = None
             res: Response | None

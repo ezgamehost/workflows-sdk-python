@@ -464,10 +464,86 @@ async def test_suspended_workflows_unwind_instead_of_hanging() -> None:
     assert pending == []
 
 
-async def test_workflow_cancellation_reports_nothing() -> None:
-    @workflow("selfcancel")
-    async def selfcancel(ctx: Context) -> Any:
-        raise asyncio.CancelledError()
+async def test_infinite_retry_after_is_clamped() -> None:
+    def forever() -> None:
+        raise RetryAfterError("later", float("inf"))
 
+    def never() -> None:
+        raise RetryAfterError("now", float("-inf"))
+
+    @workflow("infinite")
+    async def infinite(ctx: Context) -> Any:
+        await ctx.step.run("a", forever if ctx.input == "pos" else never)
+
+    assert (await execute(invocation("infinite", input="pos"), infinite, FakeLive()))[-1]["retryAfterMs"] == 86_400_000
+    assert (await execute(invocation("infinite", input="neg"), infinite, FakeLive()))[-1]["retryAfterMs"] == 0
+
+
+async def test_code_raising_its_own_cancelled_error_fails_like_any_error() -> None:
+    async def cancelled_inside() -> None:
+        t = asyncio.ensure_future(asyncio.sleep(10))
+        t.cancel()
+        await t
+
+    @workflow("stepcancel")
+    async def stepcancel(ctx: Context) -> Any:
+        return await ctx.step.run("c", cancelled_inside)
+
+    cmd = (await execute(invocation("stepcancel"), stepcancel, FakeLive()))[-1]
+    assert cmd["type"] == "stepFailed" and cmd["error"]["name"] == "CancelledError" and cmd["error"]["code"] == "user"
+
+    @workflow("wfcancel")
+    async def wfcancel(ctx: Context) -> Any:
+        await cancelled_inside()
+
+    cmd = (await execute(invocation("wfcancel"), wfcancel, FakeLive()))[-1]
+    assert cmd["type"] == "runFailed" and cmd["error"]["code"] == "user"
+
+
+async def test_cancelling_the_invocation_tells_the_running_step() -> None:
+    seen: list[bool] = []
+
+    def long() -> None:
+        from ezgh_workflows._runtime.context import _current
+
+        info = _current()
+        for _ in range(300):
+            if info.is_cancelled():
+                seen.append(True)
+                return
+            time.sleep(0.01)
+
+    @workflow("abandoned")
+    async def abandoned(ctx: Context) -> Any:
+        return await ctx.step.run("long", long)
+
+    task = asyncio.ensure_future(execute(invocation("abandoned"), abandoned, FakeLive()))
+    await asyncio.sleep(0.2)
+    task.cancel()
     with pytest.raises(asyncio.CancelledError):
-        await execute(invocation("selfcancel"), selfcancel, FakeLive())
+        await task
+    await asyncio.sleep(0.1)
+    assert seen == [True]
+
+
+async def test_only_cleanup_steps_run_while_cancelling_even_beside_a_retrying_one() -> None:
+    @workflow("cleanupmix")
+    async def cleanupmix(ctx: Context) -> Any:
+        try:
+            await ctx.step.sleep("wait", "1h")
+        finally:
+            c = ctx.step.run("cleanup", lambda: 1)
+            try:
+                await ctx.step.now("t")
+            except Exception as e:
+                return type(e).__name__
+            await c
+
+    journal = [
+        entry(1, "wait", "cancelled", kind="sleep"),
+        entry(2, "cleanup", "retrying", error={"code": "user", "name": "E", "message": "x"}),
+    ]
+    live = FakeLive()
+    cmds = await execute(invocation("cleanupmix", entries=journal, cancel=True), cleanupmix, live)
+    assert all(c["type"] != "valueRecorded" for cp in live.checkpoints for c in cp["commands"])
+    assert cmds[-1] == {"type": "runCompleted", "output": "RunCancelledError"}

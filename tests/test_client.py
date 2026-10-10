@@ -157,3 +157,11 @@ def test_options_are_checked() -> None:
         args: dict[str, Any] = {"api_key": "k", "organization_id": "o", "project_id": "p", **kw}
         with pytest.raises(ValueError):
             Client(**args)
+
+
+def test_a_null_callback_value_is_still_a_json_body(rec: Recorder) -> None:
+    rec.answers = [(200, {"id": "r"}), (200, None)]
+    client().complete_callback("r", "s", None)
+    assert rec.calls[-1][3] == b"null" and rec.calls[-1][2]["Content-Type"] == "application/json"
+    client().delete_schedule("s")
+    assert rec.calls[-1][3] is None and "Content-Type" not in rec.calls[-1][2]

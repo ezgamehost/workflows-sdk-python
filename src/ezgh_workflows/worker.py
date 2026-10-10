@@ -25,9 +25,10 @@ from typing import Any
 
 from ._env import clean_deployment, detect_deployment
 from ._http import HttpError, Response, request
-from ._runtime.execution import execute, run_in_thread
+from ._runtime.execution import execute
 from ._runtime.invocation import InvalidInvocation, parse_invocation, parse_time
 from ._runtime.live import CheckpointFailed, HttpLive, InvocationSuperseded, retry_after_seconds
+from ._runtime.threads import run_in_thread
 from ._runtime.workflow import Workflow, definition_of, workflow_info
 from ._version import SDK_NAME, SDK_VERSION
 from .client import DEFAULT_BASE_URL, Client, WorkflowsApiError
@@ -141,6 +142,7 @@ class Worker:
         self._stopping: asyncio.Event | None = None
         self._loop: asyncio.AbstractEventLoop | None = None
         self._inflight: set[asyncio.Task[None]] = set()
+        self._cancels: set[threading.Event] = set()  # each running invocation's step cancellation
 
     def __repr__(self) -> str:
         return f"<ezgh_workflows.Worker app={self._app} queue={self._queue} id={self._id}>"
@@ -246,6 +248,8 @@ class Worker:
     async def _drain(self) -> None:
         if self._inflight:
             _, pending = await asyncio.wait(set(self._inflight), timeout=self._grace)
+            for ev in list(self._cancels):  # running steps see ctx.step.cancelled()
+                ev.set()
             for t in pending:  # abandoned: the engine's heartbeat timeout re-dispatches them
                 t.cancel()
             if pending:
@@ -264,7 +268,9 @@ class Worker:
             body = dumps_bytes(self._poll_body(min(self._max_tasks, free)))
             headers = {"Authorization": f"Bearer {self._key}", "Content-Type": "application/json"}
             # A daemon thread: a poll held by the live host never delays stop() or process exit.
-            poll = run_in_thread(functools.partial(request, "POST", self._poll_url, headers, body, POLL_TIMEOUT))
+            poll = run_in_thread(
+                functools.partial(request, "POST", self._poll_url, headers, body, POLL_TIMEOUT), "ezgh-workflows-poll"
+            )
             stop = asyncio.ensure_future(self._stopping.wait())
             await asyncio.wait({poll, stop}, return_when=asyncio.FIRST_COMPLETED)
             stop.cancel()
@@ -319,7 +325,9 @@ class Worker:
             if left <= 0:
                 return None
             try:
-                res = await asyncio.to_thread(request, "POST", url, headers, data, min(left, 60.0))
+                res: Response = await run_in_thread(
+                    functools.partial(request, "POST", url, headers, data, min(left, 60.0)), "ezgh-workflows-http"
+                )
                 if res.status != 429 and res.status < 500:
                     return res
                 wait = retry_after_seconds(res) or 0.0
@@ -350,6 +358,22 @@ class Worker:
             await self._post(f"{live}/v1/invocations/complete", inv["token"], result, deadline + COMPLETE_GRACE)
             return
         cancel = threading.Event()
+        self._cancels.add(cancel)
+        try:
+            await self._run(inv, wf, live, deadline, received, result, cancel)
+        finally:
+            self._cancels.discard(cancel)
+
+    async def _run(
+        self,
+        inv: Any,
+        wf: Workflow,
+        live: str,
+        deadline: float,
+        received: float,
+        result: dict[str, Any],
+        cancel: threading.Event,
+    ) -> None:
         superseded = [False]
         io = HttpLive(live, inv["token"], deadline=deadline, reserve=max(5.0, max(0.0, deadline - received) * 0.1))
         work = asyncio.ensure_future(
@@ -365,22 +389,25 @@ class Worker:
         )
         beat = asyncio.ensure_future(self._heartbeat(live, inv["token"], deadline, cancel, work, superseded))
         try:
-            result["commands"] = await work
-        except asyncio.CancelledError:
-            if superseded[0]:
+            try:
+                result["commands"] = await work
+            except asyncio.CancelledError:
+                if superseded[0]:
+                    return
+                raise
+            except InvocationSuperseded:
                 return
-            raise
-        except InvocationSuperseded:
-            return
-        except CheckpointFailed as e:
-            self._error(e, "checkpoint")  # the engine's invocation timers recover it
-            return
-        except Exception as e:
-            self._error(e, "invocation")
-            return
+            except CheckpointFailed as e:
+                self._error(e, "checkpoint")  # the engine's invocation timers recover it
+                return
+            except Exception as e:
+                self._error(e, "invocation")
+                return
+            # Heartbeats go on until the result is delivered: a complete retried through an outage
+            # mustn't let the invocation's heartbeat timeout pass.
+            res = await self._post(f"{live}/v1/invocations/complete", inv["token"], result, deadline + COMPLETE_GRACE)
         finally:
             beat.cancel()
-        res = await self._post(f"{live}/v1/invocations/complete", inv["token"], result, deadline + COMPLETE_GRACE)
         if res is None:
             self._error(TimeoutError("workflows-live didn't take the result"), "complete")
         elif res.status >= 400 and res.status != 409:  # 409: superseded, the result is dropped
@@ -395,15 +422,14 @@ class Worker:
         work: "asyncio.Future[Any]",
         superseded: list[bool],
     ) -> None:
-        while not work.done():
+        while True:
             await asyncio.sleep(self._hb)
-            if work.done():
-                return
             res = await self._post(f"{live}/v1/invocations/heartbeat", token, {}, min(deadline, time.time() + self._hb))
             if res is None:
                 continue
             if res.status == 409:  # superseded: stop and report nothing
                 superseded[0] = True
+                cancel.set()  # a running step sees ctx.step.cancelled()
                 work.cancel()
                 return
             try:

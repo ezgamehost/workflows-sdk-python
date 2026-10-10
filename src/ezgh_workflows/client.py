@@ -16,6 +16,7 @@ from ._http import HttpError, request
 from .protocol._codec import dumps_bytes, encode_value
 
 _sleep = time.sleep
+_NO_BODY: Any = object()
 DEFAULT_BASE_URL = "https://workflows-api.ezghcloud.com"
 
 
@@ -208,7 +209,7 @@ class Client:
         self,
         method: str,
         path: str,
-        body: Any = None,
+        body: Any = _NO_BODY,
         idempotency_key: str | None = None,
         *,
         resend: bool = True,
@@ -216,7 +217,7 @@ class Client:
     ) -> Any:
         h = {"Authorization": f"Bearer {self._key.value}", "Accept": "application/json", **(headers or {})}
         data = None
-        if body is not None:
+        if body is not _NO_BODY:  # JSON null is a body too
             h["Content-Type"] = "application/json"
             data = dumps_bytes(body)
         if method != "GET":

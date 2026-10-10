@@ -1,6 +1,7 @@
 """workflows-live during an invocation: checkpoints, journal pages and payloads (design, D2, D25)."""
 
 import asyncio
+import functools
 import json
 import time
 import urllib.parse
@@ -12,6 +13,7 @@ from typing import Any, Literal, Protocol
 from .._http import HttpError, Response, request
 from ..protocol._codec import dumps_bytes
 from ..protocol._types import Checkpoint, Journal
+from .threads import run_in_thread
 
 
 class LiveIO(Protocol):
@@ -100,7 +102,9 @@ class HttpLive:
             wait: float | None = None
             res: Response | None
             try:
-                res = await asyncio.to_thread(request, method, url, headers, body, timeout)
+                res = await run_in_thread(
+                    functools.partial(request, method, url, headers, body, timeout), "ezgh-workflows-http"
+                )
             except HttpError as e:
                 last, payload_down, res = e.reason, False, None
             if res is not None:

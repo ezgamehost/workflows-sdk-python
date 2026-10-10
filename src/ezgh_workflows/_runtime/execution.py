@@ -15,7 +15,6 @@ Mirrors workflows-sdk-ts's Execution (the reference) with the phase 2 rules:
 
 import asyncio
 import contextlib
-import contextvars
 import inspect
 import math
 import threading
@@ -63,6 +62,7 @@ from .errors import (
 )
 from .invocation import parse_time
 from .live import LiveIO
+from .threads import run_in_thread
 from .workflow import Workflow, check_timeout, definition_of, merge_retry
 
 # Quiescence: this many consecutive event-loop turns with no new step call (at least 8, plan Y2).
@@ -109,41 +109,23 @@ def _quiet_invocation_ended(loop: asyncio.AbstractEventLoop) -> None:
     loop.set_exception_handler(handler)
 
 
+class _StepCancelled(Exception):
+    """The step's own code raised asyncio.CancelledError."""
+
+
+def _being_cancelled() -> bool:
+    """Whether the current task is being cancelled (by its owner), as opposed to code inside it
+    raising asyncio.CancelledError of its own."""
+    task = asyncio.current_task()
+    return task is not None and task.cancelling() > 0
+
+
 def _supports_parallel(version: str) -> bool:
     major, _, minor = version.partition(".")
     try:
         return (int(major), int(minor.split(".")[0] or "0")) >= (1, 1)
     except ValueError:
         return major == "1"
-
-
-def run_in_thread(fn: Callable[[], Any]) -> "asyncio.Future[Any]":
-    """fn in a fresh daemon thread with the caller's contextvars. A step that outlives its timeout
-    is abandoned, not killed, and never holds a slot of a shared executor."""
-    loop = asyncio.get_running_loop()
-    fut: asyncio.Future[Any] = loop.create_future()
-    ctx = contextvars.copy_context()
-
-    def target() -> None:
-        ok, value = True, None
-        try:
-            value = ctx.run(fn)
-        except BaseException as e:
-            ok, value = False, e if not isinstance(e, StopIteration) else RuntimeError(str(e))
-
-        def settle() -> None:
-            if fut.done():
-                return
-            if ok:
-                fut.set_result(value)
-            else:
-                fut.set_exception(cast(BaseException, value))
-
-        with contextlib.suppress(RuntimeError):  # the loop is closed: nobody is waiting any more
-            loop.call_soon_threadsafe(settle)
-
-    threading.Thread(target=target, name="ezgh-workflows-step", daemon=True).start()
-    return fut
 
 
 @dataclass(eq=False)
@@ -474,13 +456,21 @@ class Execution:
         try:
             work = asyncio.ensure_future(self._call_step(c.fn))  # copies the context: CURRENT_STEP
             work.add_done_callback(_retrieve)
-            if c.timeout_ms:
-                done, _ = await asyncio.wait({work}, timeout=c.timeout_ms / 1000)
-                if not done:
+            try:
+                if c.timeout_ms:
+                    done, _ = await asyncio.wait({work}, timeout=c.timeout_ms / 1000)
+                    if not done:
+                        info.timed_out.set()
+                        work.cancel()  # a thread still running is abandoned, not killed
+                        raise StepTimeoutError(f'Step "{c.name}" ran past {c.timeout_ms} ms')
+                raw = await asyncio.shield(work)
+            except asyncio.CancelledError:
+                if _being_cancelled():
+                    # The invocation itself is cancelled (superseded, shut down): tell the step.
                     info.timed_out.set()
-                    work.cancel()  # a thread still running is abandoned, not killed
-                    raise StepTimeoutError(f'Step "{c.name}" ran past {c.timeout_ms} ms')
-            raw = await work
+                    work.cancel()
+                    raise
+                raise _StepCancelled() from None
             try:
                 value = encode_value(raw)
             except (TypeError, RecursionError) as e:
@@ -491,25 +481,32 @@ class Execution:
             self._resolve(c, value)
             self.outbox.append({"type": "stepCompleted", "stepId": c.step_id, "name": c.name, "output": value})
             return None
+        except _StepCancelled:
+            # The step's own code raised asyncio.CancelledError (not the invocation's): a failure.
+            return self._step_failed(c, attempt, asyncio.CancelledError("The step raised asyncio.CancelledError"))
         except asyncio.CancelledError:
             raise
         except Exception as e:
-            retryable = not isinstance(e, NonRetriableError | OutputTooLargeError)
-            cmd: Command = {
-                "type": "stepFailed",
-                "stepId": c.step_id,
-                "name": c.name,
-                "attempt": attempt,
-                "error": encode_error(e),
-                "retryable": retryable,
-            }
-            if isinstance(e, RetryAfterError):
-                d = e.delay_ms
-                if isinstance(d, int | float) and not isinstance(d, bool) and d == d:
-                    cmd["retryAfterMs"] = int(min(MAX_RETRY_AFTER_MS, max(0.0, math.floor(d))))
-            return cmd
+            return self._step_failed(c, attempt, e)
         finally:
             CURRENT_STEP.reset(token)
+
+    @staticmethod
+    def _step_failed(c: _Call, attempt: int, e: BaseException) -> Command:
+        retryable = not isinstance(e, NonRetriableError | OutputTooLargeError)
+        cmd: Command = {
+            "type": "stepFailed",
+            "stepId": c.step_id,
+            "name": c.name,
+            "attempt": attempt,
+            "error": encode_error(e),
+            "retryable": retryable,
+        }
+        if isinstance(e, RetryAfterError):
+            d = e.delay_ms
+            if isinstance(d, int | float) and not isinstance(d, bool) and d == d:
+                cmd["retryAfterMs"] = int(min(MAX_RETRY_AFTER_MS, max(0.0, d)))  # clamps infinities too
+        return cmd
 
     def _terminal(self) -> list[Command]:
         assert self.finished is not None
@@ -549,6 +546,10 @@ class Execution:
             result = await self.d.fn(Context(self.inv["run"].get("input"), self._meta(), Step(self)))
         except InvocationEnded:
             return
+        except asyncio.CancelledError as e:
+            if _being_cancelled():
+                raise
+            self._finish(False, e)  # the workflow's own code raised it: a failure, as any other
         except Exception as e:
             self._finish(False, e)
         else:
@@ -680,7 +681,8 @@ class Execution:
                 continue
             # The deciding call: at 1.1 the oldest call with no journal entry (D2-19; calls the
             # engine owns don't hold values back), at 1.0 the oldest pending call, as in phase 1.
-            head = next((p for p in pending if p.step_id not in self.journal), None) if self.parallel else c
+            parallel = self.parallel and not self.cancel_thrown
+            head = next((p for p in pending if p.step_id not in self.journal), None) if parallel else c
             if head is not None and head.kind == "value":
                 if head.produce == "now":
                     recorded_value: str = iso_from_ms(math.floor(self.now() * 1000))

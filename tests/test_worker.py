@@ -266,3 +266,44 @@ def test_dev_mode_finds_or_creates_its_app(monkeypatch: pytest.MonkeyPatch) -> N
     monkeypatch.setattr(Client, "list_apps", list_apps)
     w = Worker.dev(api_key="k", organization_id=ORG, project_id=PRJ, workflows=[pulled], user="me")
     assert calls == ["create dev-me pull dev-me"] and "dev-me" in repr(w) and APP in repr(w)
+
+
+async def test_a_superseded_heartbeat_stops_the_step_and_reports_nothing() -> None:
+    class Host(FakeLiveHost):
+        async def handle(self, r: asyncio.StreamReader, w: asyncio.StreamWriter) -> None:
+            head = (await r.readuntil(b"\r\n\r\n")).decode()
+            if " /v1/invocations/heartbeat " in head.split("\r\n")[0] + " ":
+                length = next(
+                    (int(x.split(":")[1]) for x in head.split("\r\n") if x.lower().startswith("content-length")), 0
+                )
+                await r.readexactly(length)
+                self.heartbeats += 1
+                w.write(b"HTTP/1.1 409 X\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+                await w.drain()
+                w.close()
+                return
+            # replay the head for the default handling
+            reader = asyncio.StreamReader()
+            reader.feed_data(
+                head.encode()
+                + await r.read(
+                    int(
+                        next(
+                            (x.split(":")[1] for x in head.split("\r\n") if x.lower().startswith("content-length")), "0"
+                        )
+                    )
+                )
+            )
+            reader.feed_eof()
+            await super().handle(reader, w)
+
+    host = Host()
+    await host.start()
+    host.answers = [(200, {"invocations": [host.task("longstep")]})]
+    w = worker(host)
+    task = asyncio.create_task(w.run())
+    await until(lambda: host.heartbeats >= 1)
+    await asyncio.sleep(0.5)
+    w.stop()
+    await asyncio.wait_for(task, 5)
+    assert host.completed == []

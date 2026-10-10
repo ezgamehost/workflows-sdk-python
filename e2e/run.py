@@ -262,24 +262,6 @@ def main() -> None:
     )
     print("ok   pull worker")
 
-    parent = until(client.start(APP_ID, "e2e-parent", {"n": 4})["id"], terminal)
-    check(
-        parent["status"] == "completed" and client.output(parent["id"]) == 41,
-        "e2e-parent completes with its child's output plus one",
-        parent,
-    )
-    child_step = step_named(parent, "child")
-    check(child_step, "the parent journals its child step", parent)
-    assert child_step is not None
-    child_id = child_run_id(parent["id"], child_step["stepId"])
-    child = exists(child_id)
-    check(
-        child["status"] == "completed" and child["workflow"] == "e2e-child" and client.output(child_id) == 40,
-        "the child run exists under its derived ID and completed",
-        child,
-    )
-    print("ok   child workflow")
-
     # A schedule every minute: the first firing starts a run whose ID derives from the scheduled time.
     sched = client.create_schedule(
         app_id=APP_ID, workflow="e2e-scheduled", name=f"e2e-{int(time.time())}", cron="* * * * *"
@@ -321,6 +303,24 @@ def main() -> None:
     except WorkflowsApiError as e:
         check(e.status == 404, "a deleted schedule is 404", repr(e))
     print("ok   schedule")
+
+    parent = until(client.start(APP_ID, "e2e-parent", {"n": 4})["id"], terminal)
+    check(
+        parent["status"] == "completed" and client.output(parent["id"]) == 41,
+        "e2e-parent completes with its child's output plus one",
+        parent,
+    )
+    child_step = step_named(parent, "child")
+    check(child_step, "the parent journals its child step", parent)
+    assert child_step is not None
+    child_id = child_run_id(parent["id"], child_step["stepId"])
+    child = exists(child_id)
+    check(
+        child["status"] == "completed" and child["workflow"] == "e2e-child" and client.output(child_id) == 40,
+        "the child run exists under its derived ID and completed",
+        child,
+    )
+    print("ok   child workflow")
 
     print("PASSED")
 

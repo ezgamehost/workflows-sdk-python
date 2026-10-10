@@ -12,13 +12,17 @@ from ._runtime.errors import (
 )
 from ._runtime.workflow import Workflow, workflow
 from ._version import SDK_VERSION as __version__
+from .client import AsyncClient, Client, WorkflowsApiError
 from .protocol import PROTOCOL_VERSIONS
+from .serve import serve
 
 __all__ = [
     "PROTOCOL_VERSIONS",
+    "AsyncClient",
     "Callback",
     "CallbackTimeoutError",
     "ChildFailedError",
+    "Client",
     "Context",
     "NonRetriableError",
     "RetryAfterError",
@@ -30,6 +34,8 @@ __all__ = [
     "SyncContext",
     "Workflow",
     "WorkflowError",
+    "WorkflowsApiError",
     "__version__",
+    "serve",
     "workflow",
 ]

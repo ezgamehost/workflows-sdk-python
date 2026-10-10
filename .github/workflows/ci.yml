@@ -2,6 +2,8 @@ name: CI
 
 # check: ruff, mypy --strict, pytest (with workflows-stack's protocol vectors, vendored in
 # tests/vectors), and the wheel and sdist build, on Python 3.12 and 3.13.
+# conformance: workflows-stack's conformance harness against conformance/app.py and
+# conformance/worker.py, at the workflows-stack commit in .workflows-stack-rev.
 on:
   push:
     branches: [main]
@@ -35,3 +37,53 @@ jobs:
         run: |
           uv build
           uv run python -c "import zipfile,glob; n=zipfile.ZipFile(glob.glob('dist/*.whl')[0]).namelist(); bad=[p for p in n if not p.startswith('ezgh_workflows')]; assert not bad, bad"
+
+  # workflows-stack's conformance harness (cmd/workflows-conformance, protocol/conformance), push and
+  # pull, at the workflows-stack commit in .workflows-stack-rev. workflows-stack is internal: the job
+  # reads it with the WORKFLOWS_STACK_DEPLOY_KEY secret (a read-only deploy key on workflows-stack),
+  # and fails on a push to main when the secret is missing (so a deleted key can't turn main silently
+  # green). Pull requests without it (forks get no secrets) skip with a notice.
+  conformance:
+    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - id: token
+        env:
+          TOKEN: ${{ secrets.WORKFLOWS_STACK_DEPLOY_KEY }}
+        run: |
+          if [ -n "$TOKEN" ]; then echo "present=true" >> "$GITHUB_OUTPUT"
+          elif [ "${{ github.event_name }}" = "push" ]; then
+            echo "::error title=conformance can't run::WORKFLOWS_STACK_DEPLOY_KEY isn't set, so this job can't read ezgamehost/workflows-stack. On main that's a failure, not a skip: restore the deploy key."; exit 1
+          else echo "::notice title=conformance skipped::WORKFLOWS_STACK_DEPLOY_KEY isn't available to this pull request; the conformance harness didn't run."; fi
+      - if: steps.token.outputs.present == 'true'
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - if: steps.token.outputs.present == 'true'
+        id: rev
+        run: echo "sha=$(cat .workflows-stack-rev)" >> "$GITHUB_OUTPUT"
+      - if: steps.token.outputs.present == 'true'
+        uses: actions/checkout@v7
+        with:
+          repository: ezgamehost/workflows-stack
+          ref: ${{ steps.rev.outputs.sha }}
+          ssh-key: ${{ secrets.WORKFLOWS_STACK_DEPLOY_KEY }}
+          path: .workflows-stack
+          persist-credentials: false
+      - if: steps.token.outputs.present == 'true'
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: .workflows-stack/go.mod
+          cache-dependency-path: .workflows-stack/go.sum
+      - if: steps.token.outputs.present == 'true'
+        uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.6.0
+        with:
+          python-version: "3.13"
+      - if: steps.token.outputs.present == 'true'
+        run: uv sync --frozen
+      - if: steps.token.outputs.present == 'true'
+        name: vendored vectors match workflows-stack
+        run: diff -r --exclude SOURCE --exclude README.md .workflows-stack/protocol/vectors tests/vectors
+      - if: steps.token.outputs.present == 'true'
+        run: scripts/conformance.sh .workflows-stack

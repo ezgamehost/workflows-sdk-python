@@ -224,13 +224,13 @@ def main() -> None:
         url = state().get("callbackUrl")
         if not url:
             time.sleep(0.25)
-    # The URL is endpoints.api (the stack's PUBLIC_BASE_URL: an https origin, even locally) plus
-    # /public/v1/callbacks/<token>, the token on the run's shard; the driver posts that path to the
-    # local API.
-    m = re.fullmatch(r"https://[^/]+/public/v1/callbacks/([0-9a-f]{3})\.[A-Za-z0-9_-]{43}", url or "")
-    check(m and int(m.group(1), 16) == shard_of(approval["id"]), "e2e-approval published a callback URL", url)
+    # The URL is endpoints.api (the stack's WORKFLOWS_API_URL: the local API here) plus
+    # /public/v1/callbacks/<token>, the token on the run's shard.
+    m = re.fullmatch(re.escape(API) + r"/public/v1/callbacks/([0-9a-f]{3})\.[A-Za-z0-9_-]{43}", url or "")
+    check(
+        m and int(m.group(1), 16) == shard_of(approval["id"]), "e2e-approval published a callback URL on the API", url
+    )
     assert url is not None
-    url = API + "/public/v1/callbacks/" + url.split("/public/v1/callbacks/", 1)[1]
     check(post(url, {"approved": True}) == 200, "completing the callback succeeds")
     check(post(url, {"approved": True}) == 200, "repeating the same completion answers 200")
     check(post(url, {"approved": False}) == 409, "a different completion is 409 callback_completed")
@@ -242,20 +242,15 @@ def main() -> None:
     )
     print("ok   callback by HTTP")
 
-    # The pull worker announces e2e-pulled on its polls: a start is 409 workflow_not_announced until
-    # one lands; then the run completes on the worker.
+    # The pull worker announces e2e-pulled on its polls; the app shows it, and a run completes.
     end = time.monotonic() + 90
     while True:
-        try:
-            started = client.start(PULL_APP_ID, "e2e-pulled", {"n": 7})
+        a = client.get_app(PULL_APP_ID)
+        if any(w.get("name") == "e2e-pulled" for w in a["workflows"]):
             break
-        except WorkflowsApiError as e:
-            check(
-                e.code == "workflow_not_announced" and time.monotonic() < end,
-                "the pull worker announced e2e-pulled",
-                repr(e),
-            )
-            time.sleep(0.5)
+        check(time.monotonic() < end, "the pull app shows the worker's announced e2e-pulled", a)
+        time.sleep(0.5)
+    started = client.start(PULL_APP_ID, "e2e-pulled", {"n": 7})
     pulled = until(started["id"], terminal)
     check(
         pulled["status"] == "completed" and client.output(pulled["id"]) == 49, "the pull worker runs e2e-pulled", pulled

@@ -1,0 +1,57 @@
+[project]
+name = "ezgh-workflows"
+version = "0.1.0"
+description = "Durable workflows as code for EZGH Cloud: steps, sleeps, retries, callbacks, child workflows and schedules."
+readme = "README.md"
+license = "Apache-2.0"
+license-files = ["LICENSE"]
+requires-python = ">=3.12"
+dependencies = []
+classifiers = [
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Framework :: AsyncIO",
+  "Typing :: Typed",
+]
+
+[project.urls]
+Homepage = "https://docs.ezghcloud.com/workflows"
+Source = "https://github.com/ezgamehost/workflows-sdk-python"
+
+[dependency-groups]
+dev = [
+  "pytest==8.4.2",
+  "pytest-asyncio==1.2.0",
+  "mypy==1.18.2",
+  "ruff==0.13.3",
+  "uvicorn==0.37.0",
+]
+
+[build-system]
+requires = ["hatchling==1.27.0"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/ezgh_workflows"]
+
+[tool.hatch.build.targets.sdist]
+include = ["src/ezgh_workflows", "README.md", "LICENSE"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+testpaths = ["tests"]
+pythonpath = ["tests"]
+
+[tool.mypy]
+strict = true
+python_version = "3.12"
+files = ["src", "tests"]
+mypy_path = "tests"
+
+[tool.ruff]
+line-length = 120
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "SIM", "RUF", "ASYNC"]

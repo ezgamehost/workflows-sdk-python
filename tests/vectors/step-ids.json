@@ -1,0 +1,25 @@
+{
+  "description": "Step IDs: lowercase hex of the first 16 bytes of SHA-256(UTF-8(name) + \"\\u0000\" + decimal(occurrence)).",
+  "cases": [
+    {
+      "name": "load-user",
+      "occurrence": 0,
+      "stepId": "314ad9948a19a4844e0ea75b7de59ecd"
+    },
+    {
+      "name": "send",
+      "occurrence": 0,
+      "stepId": "bcdfe9a670a968fbb972cd66b671b567"
+    },
+    {
+      "name": "send",
+      "occurrence": 1,
+      "stepId": "0ff9aa3c9e46acbb9fc3baa8bea3b6b2"
+    },
+    {
+      "name": "café ☕",
+      "occurrence": 0,
+      "stepId": "f9f7bb47634b5204519cc8b10d5f7c2d"
+    }
+  ]
+}

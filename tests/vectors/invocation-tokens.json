@@ -1,0 +1,30 @@
+{
+  "description": "Invocation tokens: \"<shard as 3 lowercase hex>.<runId>.<invocationId>.<base64url, unpadded, of the 32-byte secret>\". The shard must equal the run ID's. Its hash is hex SHA-256 of the 32 secret bytes.",
+  "valid": [
+    {
+      "runId": "01a12088-d200-73ff-8899-aabbccddeeff",
+      "invocationId": "inv_aaaqeayeaudaocajbifqydiob4",
+      "secretHex": "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+      "token": "3ff.01a12088-d200-73ff-8899-aabbccddeeff.inv_aaaqeayeaudaocajbifqydiob4.AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyA",
+      "hash": "ae216c2ef5247a3782c135efa279a3e4cdc61094270f5d2be58c6204b7a612c9"
+    }
+  ],
+  "invalid": [
+    {
+      "token": "000.01a12088-d200-73ff-8899-aabbccddeeff.inv_aaaqeayeaudaocajbifqydiob4.AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyA",
+      "why": "shard doesn't match the run ID"
+    },
+    {
+      "token": "3ff.01a12088-d200-73ff-8899-aabbccddeeff.inv_aaaqeayeaudaocajbifqydiob4.AQID",
+      "why": "secret isn't 32 bytes"
+    },
+    {
+      "token": "3ff.01a12088-d200-73ff-8899-aabbccddeeff.AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyA",
+      "why": "three parts"
+    },
+    {
+      "token": "3ff.01a12088-d200-73ff-8899-aabbccddeeff.job_aaaqeayeaudaocajbifqydiob4.AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyA",
+      "why": "invocation ID prefix"
+    }
+  ]
+}

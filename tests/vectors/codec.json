@@ -1,0 +1,38 @@
+{
+  "description": "Values cross the wire as JSON, and a step's live result equals its replayed one. Each case names a JS value by tag, and the JSON it must encode to.",
+  "cases": [
+    {
+      "tag": "date-epoch",
+      "encoded": "1970-01-01T00:00:00.000Z"
+    },
+    {
+      "tag": "undefined",
+      "encoded": null
+    },
+    {
+      "tag": "object-with-undefined-field",
+      "encoded": {}
+    },
+    {
+      "tag": "array-with-undefined",
+      "encoded": [
+        1,
+        null
+      ]
+    },
+    {
+      "tag": "nested-date",
+      "encoded": {
+        "at": "2026-10-09T12:00:00.000Z"
+      }
+    },
+    {
+      "tag": "bigint",
+      "error": "workflows.non_retriable"
+    },
+    {
+      "tag": "function",
+      "error": "workflows.non_retriable"
+    }
+  ]
+}

@@ -1,0 +1,21 @@
+{
+  "description": "Derived run IDs (design-phase-2, D2-8): UUIDv8 = SHA-256(domain + \"\\u0000\" + a + \"\\u0000\" + b)[0:16], byte 6 = 0x80 | (shard >> 8 & 3), byte 7 = shard & 0xff, byte 8 = 0x80 | (byte 8 & 0x3f), shard = big-endian uint16 of sum[16:18] mod 1024. Domains: workflows.child (parent run ID, step ID), workflows.schedule (schedule ID, scheduled time as RFC 3339 in UTC with Go's RFC3339Nano trimming), workflows.trigger (schedule ID, Idempotency-Key).",
+  "child": [
+    { "parent": "01a12088-d200-7000-8899-aabbccddeeff", "stepId": "c4561e31d44f88833f9e17810d195e2f", "id": "d8155776-5986-8181-a6dc-2c41f2ab7987", "shard": 385 },
+    { "parent": "01a12088-d200-7000-8899-aabbccddeeff", "stepId": "b0e8de8d4e6b1207f3869a7d8738f251", "id": "119b50cc-21cc-81cf-b934-4aa7d8f983f6", "shard": 463 }
+  ],
+  "scheduled": [
+    { "scheduleId": "01a12088-d200-7201-8899-aabbccddeeff", "scheduledTime": "2026-10-10T00:00:00Z", "id": "c7cd9431-22c3-81f0-ae58-faeb363d8b87", "shard": 496 },
+    { "scheduleId": "01a12088-d200-7201-8899-aabbccddeeff", "scheduledTime": "2026-10-10T00:01:00Z", "id": "78b37692-8f3e-80b4-a7a6-869b22388722", "shard": 180 },
+    { "scheduleId": "01a12088-d200-7201-8899-aabbccddeeff", "scheduledTime": "2026-03-08T07:30:00Z", "id": "cc1940f0-d705-83a6-b8ce-99ff4274fb90", "shard": 934 }
+  ],
+  "triggered": [
+    { "scheduleId": "01a12088-d200-7201-8899-aabbccddeeff", "idempotencyKey": "trigger-1", "id": "4470ea2f-12c0-836e-b6b0-9c9dde57f178", "shard": 878 },
+    { "scheduleId": "01a12088-d200-7201-8899-aabbccddeeff", "idempotencyKey": "k:with.dots-2", "id": "e37782e8-22e2-80a1-af04-451cb14de333", "shard": 161 }
+  ],
+  "jitter": [
+    { "scheduleId": "01a12088-d200-7201-8899-aabbccddeeff", "scheduledTime": "2026-10-10T00:00:00Z", "jitterSeconds": 600, "offsetSeconds": 205 },
+    { "scheduleId": "01a12088-d200-7201-8899-aabbccddeeff", "scheduledTime": "2026-10-10T01:00:00Z", "jitterSeconds": 600, "offsetSeconds": 233 },
+    { "scheduleId": "01a12088-d200-7201-8899-aabbccddeeff", "scheduledTime": "2026-10-10T00:00:00Z", "jitterSeconds": 1, "offsetSeconds": 0 }
+  ]
+}

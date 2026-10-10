@@ -1,0 +1,23 @@
+{
+  "description": "RetryPolicy.Backoff(attempt): the delay before attempt+1 = min(maxMs, floor(initialMs * multiplier^(attempt-1))). Attempts count from 1.",
+  "policy": {
+    "maxAttempts": 5,
+    "initialMs": 1000,
+    "maxMs": 600000,
+    "multiplier": 2
+  },
+  "delaysMs": [
+    1000,
+    2000,
+    4000,
+    8000,
+    16000,
+    32000,
+    64000,
+    128000,
+    256000,
+    512000,
+    600000,
+    600000
+  ]
+}

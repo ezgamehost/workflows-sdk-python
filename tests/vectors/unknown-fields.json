@@ -1,0 +1,115 @@
+{
+  "description": "One valid invocation per kind, each with an extra top-level field (futureField) and, where there's a journal, an extra field (futureEntryField) in one entry. Minor protocol versions add fields: every consumer must accept them and ignore what it doesn't know, and the schemas allow them.",
+  "cases": [
+    {
+      "kind": "orchestrate",
+      "invocation": {
+        "protocolVersion": "1.0",
+        "kind": "orchestrate",
+        "invocationId": "inv_aaaqeayeaudaocajbifqydiob4",
+        "token": "3ff.01a12088-d200-73ff-8899-aabbccddeeff.inv_aaaqeayeaudaocajbifqydiob4.AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyA",
+        "endpoints": {
+          "live": "https://workflows-live.ezghcloud.com"
+        },
+        "run": {
+          "id": "01a12088-d200-73ff-8899-aabbccddeeff",
+          "runKey": "order-8812",
+          "workflow": "onboarding",
+          "input": {
+            "userId": "u_1"
+          },
+          "attempt": 1,
+          "startedAt": "2026-10-09T12:00:00Z"
+        },
+        "journal": {
+          "complete": true,
+          "entries": [
+            {
+              "seq": 1,
+              "stepId": "314ad9948a19a4844e0ea75b7de59ecd",
+              "name": "load-user",
+              "kind": "run",
+              "status": "completed",
+              "attempt": 1,
+              "output": {
+                "id": "u_1"
+              },
+              "futureEntryField": true
+            }
+          ]
+        },
+        "deadline": "2026-10-09T12:05:00Z",
+        "cancel": null,
+        "futureField": {
+          "x": 1
+        }
+      }
+    },
+    {
+      "kind": "step",
+      "invocation": {
+        "protocolVersion": "1.0",
+        "kind": "step",
+        "invocationId": "inv_aaaqeayeaudaocajbifqydiob4",
+        "token": "3ff.01a12088-d200-73ff-8899-aabbccddeeff.inv_aaaqeayeaudaocajbifqydiob4.AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyA",
+        "endpoints": {
+          "live": "https://workflows-live.ezghcloud.com"
+        },
+        "run": {
+          "id": "01a12088-d200-73ff-8899-aabbccddeeff",
+          "workflow": "onboarding",
+          "input": {
+            "userId": "u_1"
+          },
+          "attempt": 1,
+          "startedAt": "2026-10-09T12:00:00Z"
+        },
+        "journal": {
+          "complete": true,
+          "entries": [
+            {
+              "seq": 1,
+              "stepId": "314ad9948a19a4844e0ea75b7de59ecd",
+              "name": "load-user",
+              "kind": "run",
+              "status": "retrying",
+              "attempt": 1,
+              "error": {
+                "code": "user",
+                "name": "HttpError",
+                "message": "502"
+              },
+              "futureEntryField": true
+            }
+          ]
+        },
+        "targetStepId": "314ad9948a19a4844e0ea75b7de59ecd",
+        "deadline": "2026-10-09T12:05:00Z",
+        "cancel": {
+          "requestedAt": "2026-10-09T12:01:00Z",
+          "graceUntil": "2026-10-09T12:06:00Z"
+        },
+        "futureField": {
+          "x": 1
+        }
+      }
+    },
+    {
+      "kind": "sync",
+      "invocation": {
+        "protocolVersion": "1.0",
+        "kind": "sync",
+        "invocationId": "inv_aaaqeayeaudaocajbifqydiob4",
+        "token": "",
+        "endpoints": {
+          "live": "https://workflows-live.ezghcloud.com"
+        },
+        "deadline": "2026-10-09T12:00:30Z",
+        "cancel": null,
+        "futureField": {
+          "x": 1
+        }
+      }
+    }
+  ]
+}

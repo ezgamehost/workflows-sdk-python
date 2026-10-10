@@ -1,0 +1,18 @@
+{
+  "description": "Callback tokens: \"<shard as 3 lowercase hex>.\" + base64url (no padding) of the 32-byte secret; the hash is SHA-256 of the secret. Shards are 0-1023.",
+  "valid": [
+    { "shard": 0, "secretHex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f", "token": "000.AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8", "hashHex": "630dcd2966c4336691125448bbb25b4ff412a49c732db2c8abc1b8581bd710dd" },
+    { "shard": 513, "secretHex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f", "token": "201.AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8", "hashHex": "630dcd2966c4336691125448bbb25b4ff412a49c732db2c8abc1b8581bd710dd" },
+    { "shard": 1023, "secretHex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f", "token": "3ff.AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8", "hashHex": "630dcd2966c4336691125448bbb25b4ff412a49c732db2c8abc1b8581bd710dd" }
+  ],
+  "invalid": [
+    { "token": "400.AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8", "why": "shard 1024" },
+    { "token": "2O1.AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8", "why": "not hex" },
+    { "token": "20A.AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8", "why": "uppercase hex" },
+    { "token": "201.AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=", "why": "padding" },
+    { "token": "201.AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh", "why": "31 bytes" },
+    { "token": "201AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8", "why": "no dot" },
+    { "token": "201.AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh9", "why": "non-canonical base64url (trailing bits set)" },
+    { "token": "", "why": "empty" }
+  ]
+}

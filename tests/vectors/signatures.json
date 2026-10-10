@@ -1,0 +1,88 @@
+{
+  "description": "EZGH-Signature: t=<unix seconds>,v1=<hex HMAC-SHA256(key, t + \".\" + body)>, one v1 per active secret; key = the 32 bytes base64url-decoded from the secret text after \"whsec_\". Verification is constant-time and refuses timestamps more than 300 s from now, either way.",
+  "sign": [
+    {
+      "secrets": [
+        "whsec_AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyA"
+      ],
+      "t": 1791547200,
+      "body": "{\"a\":1}",
+      "header": "t=1791547200,v1=9d78a93e4b31945c5c8a6b811ab91c1225ffa28a8e900dca9a5f877803388bc2"
+    },
+    {
+      "secrets": [
+        "whsec_AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyA",
+        "whsec_ISIjJCUmJygpKissLS4vMDEyMzQ1Njc4OTo7PD0-P0A"
+      ],
+      "t": 1791547200,
+      "body": "{\"a\":1}",
+      "header": "t=1791547200,v1=9d78a93e4b31945c5c8a6b811ab91c1225ffa28a8e900dca9a5f877803388bc2,v1=92e636d2e093dd61aedc8b2dfdfb1f43367ab23c3f8266faac88c6dbc8a8f38f"
+    }
+  ],
+  "verify": [
+    {
+      "header": "t=1791547200,v1=9d78a93e4b31945c5c8a6b811ab91c1225ffa28a8e900dca9a5f877803388bc2",
+      "secrets": [
+        "whsec_AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyA"
+      ],
+      "body": "{\"a\":1}",
+      "now": 1791547200,
+      "result": "ok"
+    },
+    {
+      "header": "t=1791547200,v1=92e636d2e093dd61aedc8b2dfdfb1f43367ab23c3f8266faac88c6dbc8a8f38f",
+      "secrets": [
+        "whsec_AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyA",
+        "whsec_ISIjJCUmJygpKissLS4vMDEyMzQ1Njc4OTo7PD0-P0A"
+      ],
+      "body": "{\"a\":1}",
+      "now": 1791547260,
+      "result": "ok"
+    },
+    {
+      "header": "t=1791547200,v1=9d78a93e4b31945c5c8a6b811ab91c1225ffa28a8e900dca9a5f877803388bc2",
+      "secrets": [
+        "whsec_ISIjJCUmJygpKissLS4vMDEyMzQ1Njc4OTo7PD0-P0A"
+      ],
+      "body": "{\"a\":1}",
+      "now": 1791547200,
+      "result": "invalid"
+    },
+    {
+      "header": "t=1791547200,v1=9d78a93e4b31945c5c8a6b811ab91c1225ffa28a8e900dca9a5f877803388bc2",
+      "secrets": [
+        "whsec_AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyA"
+      ],
+      "body": "{\"a\":2}",
+      "now": 1791547200,
+      "result": "invalid"
+    },
+    {
+      "header": "t=1791547200,v1=9d78a93e4b31945c5c8a6b811ab91c1225ffa28a8e900dca9a5f877803388bc2",
+      "secrets": [
+        "whsec_AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyA"
+      ],
+      "body": "{\"a\":1}",
+      "now": 1791547501,
+      "result": "expired"
+    },
+    {
+      "header": "t=1791547200,v1=9d78a93e4b31945c5c8a6b811ab91c1225ffa28a8e900dca9a5f877803388bc2",
+      "secrets": [
+        "whsec_AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyA"
+      ],
+      "body": "{\"a\":1}",
+      "now": 1791546899,
+      "result": "expired"
+    },
+    {
+      "header": "v1=9d78a93e4b31945c5c8a6b811ab91c1225ffa28a8e900dca9a5f877803388bc2",
+      "secrets": [
+        "whsec_AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyA"
+      ],
+      "body": "{\"a\":1}",
+      "now": 1791547200,
+      "result": "invalid"
+    }
+  ]
+}

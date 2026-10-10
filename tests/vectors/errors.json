@@ -1,0 +1,48 @@
+{
+  "description": "Errors cross the wire as {code, name, message, data?, stack?, cause?}. Decoding then re-encoding must give back the same object (field order aside).",
+  "cases": [
+    {
+      "wire": {
+        "code": "user",
+        "name": "HttpError",
+        "message": "502 Bad Gateway",
+        "data": {
+          "status": 502
+        }
+      }
+    },
+    {
+      "wire": {
+        "code": "workflows.non_retriable",
+        "name": "NonRetriableError",
+        "message": "card declined"
+      }
+    },
+    {
+      "wire": {
+        "code": "workflows.callback_timeout",
+        "name": "CallbackTimeout",
+        "message": "no callback within 7d"
+      }
+    },
+    {
+      "wire": {
+        "code": "workflows.child_failed",
+        "name": "ChildFailed",
+        "message": "provision-account failed",
+        "cause": {
+          "code": "user",
+          "name": "Error",
+          "message": "quota"
+        }
+      }
+    },
+    {
+      "wire": {
+        "code": "workflows.invocation_lost",
+        "name": "InvocationLost",
+        "message": "the invocation died while the step ran"
+      }
+    }
+  ]
+}

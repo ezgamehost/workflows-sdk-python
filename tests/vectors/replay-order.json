@@ -1,0 +1,28 @@
+{
+  "description": "Replay resolves recorded outcomes one at a time in seq order, yielding between each. The code races step a against step b and then runs a step named after the winner. b committed first (seq 1), so replay must take the b branch.",
+  "workflow": "race",
+  "journal": {
+    "complete": true,
+    "entries": [
+      {
+        "seq": 1,
+        "stepId": "c4561e31d44f88833f9e17810d195e2f",
+        "name": "b",
+        "kind": "run",
+        "status": "completed",
+        "attempt": 1,
+        "output": "b"
+      },
+      {
+        "seq": 2,
+        "stepId": "b0e8de8d4e6b1207f3869a7d8738f251",
+        "name": "a",
+        "kind": "run",
+        "status": "completed",
+        "attempt": 1,
+        "output": "a"
+      }
+    ]
+  },
+  "expectNextStep": "after-b"
+}

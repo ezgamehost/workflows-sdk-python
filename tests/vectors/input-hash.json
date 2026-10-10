@@ -1,0 +1,12 @@
+{
+  "description": "InputHash: hex SHA-256 of the input's canonical JSON (internal/kit/canonical; reference: protocol/canonical.mjs, vendored from service-template): no whitespace, object keys sorted by Unicode code point, strings and numbers as ECMAScript's JSON.stringify writes them. An absent input hashes as null. Each input is written here exactly as a client might send it; canonical is what it hashes.",
+  "cases": [
+    { "why": "one key", "input": {"userId":"u_1"}, "canonical": "{\"userId\":\"u_1\"}", "hash": "6cae1fc333a77accbec38926c8dd768d60d5529816017b9214a292c843c300bd" },
+    { "why": "an absent input hashes as null", "input": null, "canonical": "null", "hash": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b" },
+    { "why": "keys sorted at every depth, arrays keep their order", "input": {"b":1,"a":2,"c":{"z":[3,{"y":true,"x":null}],"a":"s"}}, "canonical": "{\"a\":2,\"b\":1,\"c\":{\"a\":\"s\",\"z\":[3,{\"x\":null,\"y\":true}]}}", "hash": "c3fa6415713e82f91534a4833ae31d1883eb0748d23cb8f53bfea3e5c2fd18f8" },
+    { "why": "numbers as JSON.stringify writes them: 1.0 is 1, 1e21 is 1e+21, -0 is 0", "input": {"n":1.0,"big":1e21,"neg0":-0,"frac":0.1,"exp":1.5e-7,"int":-42}, "canonical": "{\"big\":1e+21,\"exp\":1.5e-7,\"frac\":0.1,\"int\":-42,\"n\":1,\"neg0\":0}", "hash": "d1bec4b1d8fbb434ba0ff9b1e085b1130f84e669031eff9e4852831abf0f0aba" },
+    { "why": "strings escape only \", \\ and U+0000-U+001F (U+2028, <, >, & and non-ASCII stay raw); keys sort by code point (U+FF61 before U+1F600, unlike UTF-16 order)", "input": {"text":"café ☕ \u2028 <&> \"q\" \\ \u0001","\uff61":1,"\ud83d\ude00":2,"é":3,"e":4}, "canonical": "{\"e\":4,\"text\":\"café ☕   <&> \\\"q\\\" \\\\ \\u0001\",\"é\":3,\"｡\":1,\"😀\":2}", "hash": "f97907a128f964c7044a6812357776500a609544809b813caad4f67f0f22e620" },
+    { "why": "an empty array", "input": [], "canonical": "[]", "hash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945" },
+    { "why": "a string", "input": "plain string", "canonical": "\"plain string\"", "hash": "100e95befce5c34a8927f2359d07d340222625dd67a32ea9c96031c7f9b5f74a" }
+  ]
+}

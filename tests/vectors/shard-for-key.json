@@ -1,0 +1,20 @@
+{
+  "description": "A keyed run's shard: the first 8 bytes of SHA-256(projectId + \"\\u0000\" + runKey), big-endian, mod 1024.",
+  "cases": [
+    {
+      "projectId": "0199a3c2-5b1e-7d40-9f3a-2c8e6b1d4f70",
+      "runKey": "order-8812",
+      "shard": 882
+    },
+    {
+      "projectId": "0199a3c2-5b1e-7d40-9f3a-2c8e6b1d4f70",
+      "runKey": "order-8813",
+      "shard": 210
+    },
+    {
+      "projectId": "0199b000-0000-7000-8000-000000000001",
+      "runKey": "a",
+      "shard": 123
+    }
+  ]
+}

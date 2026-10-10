@@ -1,0 +1,718 @@
+{
+  "invocation": {
+    "valid": [
+      {
+        "protocolVersion": "1.0",
+        "kind": "orchestrate",
+        "invocationId": "inv_aaaqeayeaudaocajbifqydiob4",
+        "token": "3ff.01a12088-d200-73ff-8899-aabbccddeeff.inv_aaaqeayeaudaocajbifqydiob4.AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyA",
+        "endpoints": {
+          "live": "https://workflows-live.ezghcloud.com"
+        },
+        "run": {
+          "id": "01a12088-d200-73ff-8899-aabbccddeeff",
+          "runKey": "order-8812",
+          "workflow": "onboarding",
+          "input": {
+            "userId": "u_1"
+          },
+          "attempt": 1,
+          "startedAt": "2026-10-09T12:00:00Z"
+        },
+        "journal": {
+          "complete": true,
+          "entries": []
+        },
+        "deadline": "2026-10-09T12:05:00Z",
+        "cancel": null
+      },
+      {
+        "protocolVersion": "1.0",
+        "kind": "step",
+        "invocationId": "inv_aaaqeayeaudaocajbifqydiob4",
+        "token": "3ff.01a12088-d200-73ff-8899-aabbccddeeff.inv_aaaqeayeaudaocajbifqydiob4.AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyA",
+        "endpoints": {
+          "live": "https://workflows-live.ezghcloud.com"
+        },
+        "run": {
+          "id": "01a12088-d200-73ff-8899-aabbccddeeff",
+          "workflow": "onboarding",
+          "input": {
+            "userId": "u_1"
+          },
+          "attempt": 1,
+          "startedAt": "2026-10-09T12:00:00Z"
+        },
+        "journal": {
+          "complete": true,
+          "entries": [
+            {
+              "seq": 1,
+              "stepId": "314ad9948a19a4844e0ea75b7de59ecd",
+              "name": "load-user",
+              "kind": "run",
+              "status": "retrying",
+              "attempt": 1,
+              "error": {
+                "code": "user",
+                "name": "HttpError",
+                "message": "502"
+              }
+            }
+          ]
+        },
+        "targetStepId": "314ad9948a19a4844e0ea75b7de59ecd",
+        "deadline": "2026-10-09T12:05:00Z",
+        "cancel": {
+          "requestedAt": "2026-10-09T12:01:00Z",
+          "graceUntil": "2026-10-09T12:06:00Z"
+        }
+      },
+      {
+        "protocolVersion": "1.0",
+        "kind": "sync",
+        "invocationId": "inv_aaaqeayeaudaocajbifqydiob4",
+        "token": "",
+        "endpoints": {
+          "live": "https://workflows-live.ezghcloud.com"
+        },
+        "deadline": "2026-10-09T12:00:30Z",
+        "cancel": null
+      },
+      {
+        "protocolVersion": "1.1",
+        "kind": "step",
+        "invocationId": "inv_aaaqeayeaudaocajbifqydiob4",
+        "token": "3ff.01a12088-d200-73ff-8899-aabbccddeeff.inv_aaaqeayeaudaocajbifqydiob4.AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyA",
+        "endpoints": {
+          "live": "https://workflows-live.ezghcloud.com",
+          "api": "https://workflows.ezghcloud.com"
+        },
+        "run": {
+          "id": "01a12088-d200-73ff-8899-aabbccddeeff",
+          "workflow": "onboarding",
+          "input": {
+            "userId": "u_1"
+          },
+          "attempt": 1,
+          "startedAt": "2026-10-09T12:00:00Z",
+          "schedule": {
+            "id": "01a12088-d200-7201-8899-aabbccddeeff",
+            "scheduledTime": "2026-10-10T00:00:00Z"
+          }
+        },
+        "journal": {
+          "complete": true,
+          "entries": [
+            {
+              "seq": 1,
+              "stepId": "314ad9948a19a4844e0ea75b7de59ecd",
+              "name": "load-user",
+              "kind": "run",
+              "status": "retrying",
+              "attempt": 1,
+              "error": {
+                "code": "user",
+                "name": "HttpError",
+                "message": "502"
+              }
+            },
+            {
+              "seq": 2,
+              "stepId": "6b460c8e80c757cd5cef81a0acbd2700",
+              "name": "approval",
+              "kind": "callback",
+              "status": "waiting",
+              "attempt": 0,
+              "token": "201.AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8"
+            },
+            {
+              "seq": 3,
+              "stepId": "656796bbb0379a719ae3fc606da3e916",
+              "name": "provision",
+              "kind": "invoke",
+              "status": "waiting",
+              "attempt": 0
+            }
+          ]
+        },
+        "targetStepId": "314ad9948a19a4844e0ea75b7de59ecd",
+        "deadline": "2026-10-09T12:05:00Z",
+        "cancel": null
+      }
+    ],
+    "invalid": [
+      {
+        "protocolVersion": "1.0",
+        "kind": "orchestrate",
+        "invocationId": "inv_x",
+        "token": "t",
+        "endpoints": {
+          "live": "https://x"
+        },
+        "deadline": "2026-10-09T12:05:00Z",
+        "cancel": null
+      },
+      {
+        "protocolVersion": "1.0",
+        "kind": "teleport",
+        "invocationId": "inv_aaaqeayeaudaocajbifqydiob4",
+        "token": "",
+        "endpoints": {
+          "live": "https://x"
+        },
+        "deadline": "2026-10-09T12:05:00Z",
+        "cancel": null
+      },
+      {
+        "protocolVersion": "1.0",
+        "kind": "step",
+        "invocationId": "inv_aaaqeayeaudaocajbifqydiob4",
+        "token": "3ff.01a12088-d200-73ff-8899-aabbccddeeff.inv_aaaqeayeaudaocajbifqydiob4.AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyA",
+        "endpoints": {
+          "live": "https://workflows-live.ezghcloud.com"
+        },
+        "run": {
+          "id": "01a12088-d200-73ff-8899-aabbccddeeff",
+          "runKey": "order-8812",
+          "workflow": "onboarding",
+          "input": {
+            "userId": "u_1"
+          },
+          "attempt": 1,
+          "startedAt": "2026-10-09T12:00:00Z"
+        },
+        "journal": {
+          "complete": true,
+          "entries": []
+        },
+        "deadline": "2026-10-09T12:05:00Z",
+        "cancel": null
+      }
+    ]
+  },
+  "command": {
+    "valid": [
+      {
+        "type": "stepStarted",
+        "stepId": "314ad9948a19a4844e0ea75b7de59ecd",
+        "name": "load-user",
+        "attempt": 1,
+        "retry": {
+          "maxAttempts": 5,
+          "initialMs": 1000,
+          "maxMs": 600000,
+          "multiplier": 2
+        },
+        "timeoutMs": 0
+      },
+      {
+        "type": "stepCompleted",
+        "stepId": "314ad9948a19a4844e0ea75b7de59ecd",
+        "name": "load-user",
+        "output": {
+          "id": "u_1"
+        }
+      },
+      {
+        "type": "stepCompleted",
+        "stepId": "314ad9948a19a4844e0ea75b7de59ecd",
+        "name": "load-user",
+        "outputRef": "pay_aaaqeayeaudaocajbifqydiob4"
+      },
+      {
+        "type": "stepFailed",
+        "stepId": "314ad9948a19a4844e0ea75b7de59ecd",
+        "name": "load-user",
+        "attempt": 1,
+        "error": {
+          "code": "user",
+          "name": "HttpError",
+          "message": "502"
+        },
+        "retryable": true
+      },
+      {
+        "type": "sleep",
+        "stepId": "314ad9948a19a4844e0ea75b7de59ecd",
+        "name": "cooldown",
+        "until": "2026-10-12T12:00:00Z"
+      },
+      {
+        "type": "valueRecorded",
+        "stepId": "314ad9948a19a4844e0ea75b7de59ecd",
+        "name": "now",
+        "value": "2026-10-09T12:00:00.000Z"
+      },
+      {
+        "type": "runCompleted",
+        "output": {
+          "ok": true
+        }
+      },
+      {
+        "type": "runFailed",
+        "error": {
+          "code": "workflows.non_retriable",
+          "name": "NonRetriableError",
+          "message": "no"
+        },
+        "causeStepId": "314ad9948a19a4844e0ea75b7de59ecd"
+      },
+      {
+        "type": "workflowNotFound",
+        "workflow": "gone"
+      },
+      {
+        "type": "callbackCreated",
+        "stepId": "s1",
+        "name": "approval",
+        "token": "201.AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8",
+        "timeoutMs": 60000
+      },
+      {
+        "type": "waitForCallback",
+        "stepId": "s1"
+      },
+      {
+        "type": "invoke",
+        "stepId": "s2",
+        "name": "child",
+        "workflow": "provision",
+        "input": {
+          "a": 1
+        }
+      },
+      {
+        "type": "invoke",
+        "stepId": "s2",
+        "name": "child",
+        "workflow": "provision",
+        "inputRef": "pay_aaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      {
+        "type": "planParallel",
+        "steps": [
+          {
+            "stepId": "a",
+            "name": "a"
+          },
+          {
+            "stepId": "b",
+            "name": "b",
+            "retry": {
+              "maxAttempts": 5,
+              "initialMs": 1000,
+              "maxMs": 600000,
+              "multiplier": 2
+            },
+            "timeoutMs": 5
+          }
+        ]
+      }
+    ],
+    "invalid": [
+      {
+        "type": "stepStarted",
+        "name": "x",
+        "attempt": 1
+      },
+      {
+        "type": "stepFailed",
+        "stepId": "314ad9948a19a4844e0ea75b7de59ecd",
+        "name": "x",
+        "attempt": 0,
+        "error": {
+          "code": "user",
+          "name": "E",
+          "message": "m"
+        }
+      },
+      {
+        "type": "explode"
+      },
+      {
+        "type": "callbackCreated",
+        "stepId": "s1",
+        "name": "approval",
+        "timeoutMs": 60000
+      },
+      {
+        "type": "callbackCreated",
+        "stepId": "s1",
+        "name": "approval",
+        "token": "xyz",
+        "timeoutMs": 1
+      },
+      {
+        "type": "callbackCreated",
+        "stepId": "s1",
+        "name": "approval",
+        "token": "201.AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8"
+      },
+      {
+        "type": "waitForCallback"
+      },
+      {
+        "type": "invoke",
+        "stepId": "s2",
+        "name": "child",
+        "input": 1
+      },
+      {
+        "type": "invoke",
+        "stepId": "s2",
+        "name": "child",
+        "workflow": "p",
+        "input": 1,
+        "inputRef": "pay_aaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      {
+        "type": "planParallel"
+      },
+      {
+        "type": "planParallel",
+        "steps": [
+          {
+            "stepId": "a",
+            "name": "a\u0000"
+          }
+        ]
+      },
+      {
+        "type": "sleep",
+        "stepId": "s",
+        "name": "s",
+        "until": "1970-01-01T00:00:00Z",
+        "token": "201.AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8"
+      }
+    ]
+  },
+  "checkpoint": {
+    "valid": [
+      {
+        "invocationId": "inv_aaaqeayeaudaocajbifqydiob4",
+        "seq": 1,
+        "commands": []
+      }
+    ],
+    "invalid": [
+      {
+        "invocationId": "inv_aaaqeayeaudaocajbifqydiob4",
+        "seq": 0,
+        "commands": []
+      }
+    ]
+  },
+  "invocationResult": {
+    "valid": [
+      {
+        "commands": [
+          {
+            "type": "runCompleted",
+            "output": null
+          }
+        ],
+        "deployment": "dpl_1",
+        "sdk": {
+          "name": "@ezgh/workflows",
+          "version": "0.1.0"
+        }
+      }
+    ],
+    "invalid": [
+      {
+        "commands": []
+      }
+    ]
+  },
+  "syncReply": {
+    "valid": [
+      {
+        "protocolVersions": [
+          "1.0"
+        ],
+        "sdk": {
+          "name": "@ezgh/workflows",
+          "version": "0.1.0"
+        },
+        "maxInvocationSeconds": 300,
+        "workflows": [
+          {
+            "name": "onboarding"
+          }
+        ]
+      }
+    ],
+    "invalid": [
+      {
+        "ok": true
+      },
+      {
+        "protocolVersions": [],
+        "sdk": {
+          "name": "x",
+          "version": "1"
+        },
+        "maxInvocationSeconds": 300,
+        "workflows": []
+      },
+      {
+        "protocolVersions": [
+          "1.0"
+        ],
+        "sdk": {
+          "name": "x",
+          "version": "1"
+        },
+        "maxInvocationSeconds": 901,
+        "workflows": []
+      },
+      {
+        "protocolVersions": [
+          "1.0"
+        ],
+        "sdk": {
+          "name": "x",
+          "version": "1"
+        },
+        "maxInvocationSeconds": 300,
+        "workflows": [
+          {
+            "name": "has space"
+          }
+        ]
+      }
+    ]
+  },
+  "pollRequest": {
+    "valid": [
+      {
+        "app": "0199a3d0-2b3c-7d4e-9f50-6b7c8d9e0f1a",
+        "queue": "default",
+        "maxTasks": 10,
+        "workerId": "w-1",
+        "protocolVersions": [
+          "1.1"
+        ],
+        "sdk": {
+          "name": "go",
+          "version": "0.1.0"
+        }
+      },
+      {
+        "app": "0199a3d0-2b3c-7d4e-9f50-6b7c8d9e0f1a",
+        "queue": "default",
+        "maxTasks": 1,
+        "workerId": "w-1",
+        "protocolVersions": [
+          "1.0",
+          "1.1"
+        ],
+        "sdk": {
+          "name": "go",
+          "version": "0.1.0"
+        },
+        "workflows": [
+          {
+            "name": "onboarding",
+            "retry": {
+              "maxAttempts": 5,
+              "initialMs": 1000,
+              "maxMs": 600000,
+              "multiplier": 2
+            },
+            "timeoutMs": 60000
+          }
+        ]
+      }
+    ],
+    "invalid": [
+      {
+        "app": "0199a3d0-2b3c-7d4e-9f50-6b7c8d9e0f1a",
+        "queue": "default",
+        "maxTasks": 0,
+        "workerId": "w-1",
+        "protocolVersions": [
+          "1.1"
+        ],
+        "sdk": {
+          "name": "go",
+          "version": "0.1.0"
+        }
+      },
+      {
+        "app": "0199a3d0-2b3c-7d4e-9f50-6b7c8d9e0f1a",
+        "queue": "default",
+        "maxTasks": 11,
+        "workerId": "w-1",
+        "protocolVersions": [
+          "1.1"
+        ],
+        "sdk": {
+          "name": "go",
+          "version": "0.1.0"
+        }
+      },
+      {
+        "app": "0199a3d0-2b3c-7d4e-9f50-6b7c8d9e0f1a",
+        "queue": "Bad Queue",
+        "maxTasks": 10,
+        "workerId": "w-1",
+        "protocolVersions": [
+          "1.1"
+        ],
+        "sdk": {
+          "name": "go",
+          "version": "0.1.0"
+        }
+      },
+      {
+        "app": "0199a3d0-2b3c-7d4e-9f50-6b7c8d9e0f1a",
+        "queue": "default",
+        "maxTasks": 10,
+        "workerId": "",
+        "protocolVersions": [
+          "1.1"
+        ],
+        "sdk": {
+          "name": "go",
+          "version": "0.1.0"
+        }
+      },
+      {
+        "app": "0199a3d0-2b3c-7d4e-9f50-6b7c8d9e0f1a",
+        "queue": "default",
+        "maxTasks": 10,
+        "workerId": "w-1",
+        "protocolVersions": [],
+        "sdk": {
+          "name": "go",
+          "version": "0.1.0"
+        }
+      },
+      {
+        "app": "0199a3d0-2b3c-7d4e-9f50-6b7c8d9e0f1a",
+        "queue": "default",
+        "maxTasks": 10,
+        "workerId": "w-1",
+        "protocolVersions": [
+          "1.1"
+        ]
+      },
+      {
+        "app": "not-a-uuid",
+        "queue": "default",
+        "maxTasks": 10,
+        "workerId": "w-1",
+        "protocolVersions": [
+          "1.1"
+        ],
+        "sdk": {
+          "name": "go",
+          "version": "0.1.0"
+        }
+      },
+      {
+        "app": "0199a3d0-2b3c-7d4e-9f50-6b7c8d9e0f1a",
+        "queue": "default",
+        "maxTasks": 10,
+        "workerId": "w-1",
+        "protocolVersions": [
+          "1.1"
+        ],
+        "sdk": {
+          "name": "go",
+          "version": "0.1.0"
+        },
+        "workflows": [
+          {
+            "name": "bad name"
+          }
+        ]
+      }
+    ]
+  },
+  "pollResponse": {
+    "valid": [
+      {
+        "invocations": []
+      },
+      {
+        "invocations": [
+          {
+            "protocolVersion": "1.1",
+            "kind": "step",
+            "invocationId": "inv_aaaqeayeaudaocajbifqydiob4",
+            "token": "3ff.01a12088-d200-73ff-8899-aabbccddeeff.inv_aaaqeayeaudaocajbifqydiob4.AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyA",
+            "endpoints": {
+              "live": "https://workflows-live.ezghcloud.com",
+              "api": "https://workflows.ezghcloud.com"
+            },
+            "run": {
+              "id": "01a12088-d200-73ff-8899-aabbccddeeff",
+              "workflow": "onboarding",
+              "input": {
+                "userId": "u_1"
+              },
+              "attempt": 1,
+              "startedAt": "2026-10-09T12:00:00Z",
+              "schedule": {
+                "id": "01a12088-d200-7201-8899-aabbccddeeff",
+                "scheduledTime": "2026-10-10T00:00:00Z"
+              }
+            },
+            "journal": {
+              "complete": true,
+              "entries": [
+                {
+                  "seq": 1,
+                  "stepId": "314ad9948a19a4844e0ea75b7de59ecd",
+                  "name": "load-user",
+                  "kind": "run",
+                  "status": "retrying",
+                  "attempt": 1,
+                  "error": {
+                    "code": "user",
+                    "name": "HttpError",
+                    "message": "502"
+                  }
+                },
+                {
+                  "seq": 2,
+                  "stepId": "6b460c8e80c757cd5cef81a0acbd2700",
+                  "name": "approval",
+                  "kind": "callback",
+                  "status": "waiting",
+                  "attempt": 0,
+                  "token": "201.AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8"
+                },
+                {
+                  "seq": 3,
+                  "stepId": "656796bbb0379a719ae3fc606da3e916",
+                  "name": "provision",
+                  "kind": "invoke",
+                  "status": "waiting",
+                  "attempt": 0
+                }
+              ]
+            },
+            "targetStepId": "314ad9948a19a4844e0ea75b7de59ecd",
+            "deadline": "2026-10-09T12:05:00Z",
+            "cancel": null
+          }
+        ]
+      }
+    ],
+    "invalid": [
+      {},
+      {
+        "invocations": [
+          {
+            "kind": "step"
+          }
+        ]
+      }
+    ]
+  }
+}

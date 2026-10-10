@@ -1,0 +1,51 @@
+{
+  "description": "UUIDv7 run IDs carrying their shard in rand_a: byte 6 = 0x70 | (shard >> 8 & 3), byte 7 = shard & 0xff, bytes 8-15 = the 8 random bytes with byte 8's top two bits set to 10.",
+  "valid": [
+    {
+      "shard": 0,
+      "unixMs": 1791547200000,
+      "randomHex": "8899aabbccddeeff",
+      "id": "01a12088-d200-7000-8899-aabbccddeeff"
+    },
+    {
+      "shard": 1,
+      "unixMs": 1791547200000,
+      "randomHex": "8899aabbccddeeff",
+      "id": "01a12088-d200-7001-8899-aabbccddeeff"
+    },
+    {
+      "shard": 513,
+      "unixMs": 1791547200000,
+      "randomHex": "8899aabbccddeeff",
+      "id": "01a12088-d200-7201-8899-aabbccddeeff"
+    },
+    {
+      "shard": 1023,
+      "unixMs": 1791547200000,
+      "randomHex": "8899aabbccddeeff",
+      "id": "01a12088-d200-73ff-8899-aabbccddeeff"
+    }
+  ],
+  "invalid": [
+    {
+      "id": "01a12088-d200-7400-8899-aabbccddeeff",
+      "why": "rand_a's top two bits aren't zero"
+    },
+    {
+      "id": "01a12088-d200-4000-8899-aabbccddeeff",
+      "why": "version 4"
+    },
+    {
+      "id": "01a12088-d200-7000-c899-aabbccddeeff",
+      "why": "variant isn't 10"
+    },
+    {
+      "id": "01A12088-D200-7000-8899-AABBCCDDEEFF",
+      "why": "uppercase"
+    },
+    {
+      "id": "01a12088d2007000889aabbccddeeff",
+      "why": "no dashes"
+    }
+  ]
+}

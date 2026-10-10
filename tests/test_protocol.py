@@ -110,3 +110,12 @@ def test_callback_tokens_carry_the_run_shard() -> None:
 
 def test_step_ids_hash_utf8() -> None:
     assert len(step_id("é", 3)) == 32
+
+
+def test_rfc3339_nano_trims_like_go() -> None:
+    from ezgh_workflows.protocol._ids import rfc3339_nano
+
+    assert rfc3339_nano("2026-10-10T00:00:00.000Z") == "2026-10-10T00:00:00Z"
+    assert rfc3339_nano("2026-10-10T02:00:00.120+02:00") == "2026-10-10T00:00:00.12Z"
+    with pytest.raises(ValueError):
+        rfc3339_nano(datetime(2026, 1, 1))

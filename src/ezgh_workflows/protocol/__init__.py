@@ -15,7 +15,15 @@ from ._codec import (
     json_byte_length,
     parse_duration,
 )
-from ._ids import child_run_id, is_invocation_token, new_callback_token, shard_of, step_id
+from ._ids import (
+    child_run_id,
+    is_invocation_token,
+    new_callback_token,
+    scheduled_run_id,
+    shard_of,
+    step_id,
+    triggered_run_id,
+)
 from ._signature import (
     SIGNATURE_HEADER,
     ParsedSignature,
@@ -80,9 +88,11 @@ __all__ = [
     "new_callback_token",
     "parse_duration",
     "parse_signature",
+    "scheduled_run_id",
     "shard_of",
     "sign",
     "step_id",
+    "triggered_run_id",
     "truncate_utf8",
     "utf8_len",
     "verify",

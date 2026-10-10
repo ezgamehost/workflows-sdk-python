@@ -2,7 +2,7 @@
 
 import hashlib
 from collections.abc import Callable
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Any
 
@@ -16,9 +16,11 @@ from ezgh_workflows.protocol import (
     decode_secret,
     encode_value,
     is_invocation_token,
+    scheduled_run_id,
     shard_of,
     sign,
     step_id,
+    triggered_run_id,
     verify,
 )
 from ezgh_workflows.protocol._bytes import b64url
@@ -92,9 +94,12 @@ def test_derived_run_ids() -> None:
         assert shard_of(c["id"]) == c["shard"]
     for c in v["scheduled"]:
         assert derived_run_id("workflows.schedule", c["scheduleId"], c["scheduledTime"]) == c["id"], c
+        assert scheduled_run_id(c["scheduleId"], c["scheduledTime"]) == c["id"], c
+        t = datetime.fromisoformat(c["scheduledTime"]).astimezone(timezone(timedelta(hours=-5)))
+        assert scheduled_run_id(c["scheduleId"], t) == c["id"], c
         assert shard_of(c["id"]) == c["shard"]
     for c in v["triggered"]:
-        assert derived_run_id("workflows.trigger", c["scheduleId"], c["idempotencyKey"]) == c["id"], c
+        assert triggered_run_id(c["scheduleId"], c["idempotencyKey"]) == c["id"], c
 
 
 def test_backoff() -> None:

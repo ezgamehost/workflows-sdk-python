@@ -3,6 +3,7 @@
 import hashlib
 import os
 import re
+from datetime import UTC, datetime
 
 from ._bytes import b64url, from_b64url_strict, utf8_bytes
 
@@ -81,6 +82,27 @@ def derived_run_id(domain: str, a: str, b: str) -> str:
     u[8] = 0x80 | (u[8] & 0x3F)
     h = u.hex()
     return f"{h[:8]}-{h[8:12]}-{h[12:16]}-{h[16:20]}-{h[20:]}"
+
+
+def rfc3339_nano(t: "datetime | str") -> str:
+    """A time as Go's RFC3339Nano in UTC (fractional zeros trimmed, Z), as derived IDs hash it."""
+    if isinstance(t, str):
+        t = datetime.fromisoformat(t.replace("z", "Z"))
+    if t.tzinfo is None:
+        raise ValueError("an aware time is needed")
+    u = t.astimezone(UTC)
+    frac = f"{u.microsecond:06d}".rstrip("0")
+    return u.strftime("%Y-%m-%dT%H:%M:%S") + (f".{frac}" if frac else "") + "Z"
+
+
+def scheduled_run_id(schedule_id: str, scheduled_time: "datetime | str") -> str:
+    """The run ID of a schedule's firing at scheduled_time (domain workflows.schedule)."""
+    return derived_run_id("workflows.schedule", schedule_id, rfc3339_nano(scheduled_time))
+
+
+def triggered_run_id(schedule_id: str, idempotency_key: str) -> str:
+    """The run ID of a schedule trigger with this Idempotency-Key (domain workflows.trigger)."""
+    return derived_run_id("workflows.trigger", schedule_id, idempotency_key)
 
 
 def child_run_id(parent: str, step: str) -> str:

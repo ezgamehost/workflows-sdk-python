@@ -140,3 +140,20 @@ async def test_sync_failures_and_slow_code_between_steps() -> None:
 
     cmds = await execute(invocation("sync-fail"), sync_fail, FakeLive())
     assert cmds[-1]["type"] == "runFailed" and cmds[-1]["error"]["name"] == "KeyError"
+
+
+async def test_code_busy_outside_steps_past_the_budget_ends_the_invocation() -> None:
+    import time as t
+
+    @workflow("sync-stuck")
+    def sync_stuck(ctx: SyncContext) -> Any:
+        ctx.step.run("a", lambda: 1)
+        t.sleep(1.0)  # busy outside any step
+        return ctx.step.run("b", lambda: 2)
+
+    start = t.time()
+    live = FakeLive()
+    # deadline 5.5 s out: the budget (deadline minus the 5 s reserve) runs out after 0.5 s
+    cmds = await execute(invocation("sync-stuck"), sync_stuck, live, deadline=start + 5.5)
+    assert cmds == [{"type": "stepCompleted", "stepId": sid("a"), "name": "a", "output": 1}]
+    assert t.time() - start < 1.0

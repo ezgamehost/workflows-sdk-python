@@ -593,21 +593,32 @@ class Execution:
             return True
         return self.task is not None and self.task.done()
 
-    async def _quiesce(self) -> None:
+    async def _wait(self, ev: asyncio.Event) -> bool:
+        """ev.wait(), bounded by the invocation's time budget: False when the budget ran out while
+        the workflow was busy outside any step (the invocation then ends with what it has)."""
+        total = self.deadline - self.started
+        left = self.deadline - self.now() - max(5.0, total * 0.1)
+        try:
+            await asyncio.wait_for(ev.wait(), max(0.0, left))
+        except TimeoutError:
+            return ev.is_set()
+        return True
+
+    async def _quiesce(self) -> bool:
         while True:
-            if not self.d.is_async:
-                await self.parked.wait()
+            if not self.d.is_async and not await self._wait(self.parked):
+                return False
             seen, spins = len(self.calls), 0
             while spins < IDLE_SPINS:
                 await asyncio.sleep(0)
                 if self._workflow_over():
-                    return
+                    return True
                 if len(self.calls) != seen:
                     seen, spins = len(self.calls), 0
                 else:
                     spins += 1
             if self.d.is_async or self.parked.is_set():
-                return
+                return True
 
     def _close(self) -> None:
         """The invocation is over: anything still waiting gets InvocationEnded, so the workflow
@@ -631,7 +642,8 @@ class Execution:
     async def _drive(self) -> list[Command]:
         inv = self.inv
         while True:
-            await self._quiesce()
+            if not await self._quiesce():
+                return self._end([])
             if self.fatal is not None:
                 return self._end([{"type": "runFailed", "error": self.fatal}])
             if self.finished is not None:
@@ -647,7 +659,8 @@ class Execution:
             pending = [c for c in self.calls if not c.settled]
             if not pending:
                 self.activity.clear()
-                await self.activity.wait()
+                if not await self._wait(self.activity):
+                    return self._end([])
                 continue
             recorded = [(e["seq"], c.order, c, e) for c in pending if (e := self._recorded_entry(c)) is not None]
             if recorded:

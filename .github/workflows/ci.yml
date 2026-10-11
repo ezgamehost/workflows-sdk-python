@@ -4,6 +4,7 @@ name: CI
 # tests/vectors), and the wheel and sdist build, on Python 3.12 and 3.13.
 # conformance: workflows-stack's conformance harness against conformance/app.py and
 # conformance/worker.py, at the workflows-stack commit in .workflows-stack-rev.
+# e2e: the end-to-end suite (phase 1 and 2) against `workflows-stack all` at that commit.
 on:
   push:
     branches: [main]
@@ -87,3 +88,87 @@ jobs:
         run: diff -r --exclude SOURCE --exclude README.md .workflows-stack/protocol/vectors tests/vectors
       - if: steps.token.outputs.present == 'true'
         run: scripts/conformance.sh .workflows-stack
+
+  # End to end: this SDK against the real workflows-stack at .workflows-stack-rev (`workflows-stack
+  # all`: api, live, engine, dispatch), on Postgres, Redis and an S3 fixture, with org-api faked by
+  # workflows-conformance fake-org-api (scripts/e2e.sh). Same secret, failure and skip rules as
+  # conformance.
+  e2e:
+    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    services:
+      postgres:
+        image: postgres:18-alpine
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -h 127.0.0.1 -U postgres"
+          --health-interval 2s
+          --health-timeout 5s
+          --health-retries 30
+      redis:
+        image: redis:8-alpine
+        ports:
+          - 6379:6379
+    env:
+      DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/postgres
+      REDIS_URL: redis://127.0.0.1:6379
+      B2_ENDPOINT: http://127.0.0.1:9000
+      B2_REGION: us-east-1
+      B2_BUCKET: workflows-e2e
+      B2_KEY_ID: workflowstestkey
+      B2_APPLICATION_KEY: workflowstestsecret
+    steps:
+      - id: token
+        env:
+          TOKEN: ${{ secrets.WORKFLOWS_STACK_DEPLOY_KEY }}
+        run: |
+          if [ -n "$TOKEN" ]; then echo "present=true" >> "$GITHUB_OUTPUT"
+          elif [ "${{ github.event_name }}" = "push" ]; then
+            echo "::error title=e2e can't run::WORKFLOWS_STACK_DEPLOY_KEY isn't set, so this job can't read ezgamehost/workflows-stack. On main that's a failure, not a skip: restore the deploy key."; exit 1
+          else echo "::notice title=e2e skipped::WORKFLOWS_STACK_DEPLOY_KEY isn't available to this pull request; the end-to-end tests didn't run."; fi
+      - if: steps.token.outputs.present == 'true'
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - if: steps.token.outputs.present == 'true'
+        id: rev
+        run: echo "sha=$(cat .workflows-stack-rev)" >> "$GITHUB_OUTPUT"
+      - if: steps.token.outputs.present == 'true'
+        uses: actions/checkout@v7
+        with:
+          repository: ezgamehost/workflows-stack
+          ref: ${{ steps.rev.outputs.sha }}
+          ssh-key: ${{ secrets.WORKFLOWS_STACK_DEPLOY_KEY }}
+          path: .workflows-stack
+          persist-credentials: false
+      - if: steps.token.outputs.present == 'true'
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: .workflows-stack/go.mod
+          cache-dependency-path: .workflows-stack/go.sum
+      - if: steps.token.outputs.present == 'true'
+        uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.6.0
+        with:
+          python-version: "3.13"
+      - if: steps.token.outputs.present == 'true'
+        run: uv sync --frozen
+      - if: steps.token.outputs.present == 'true'
+        name: S3 fixture (workflows-stack's SeaweedFS image)
+        run: |
+          source .workflows-stack/internal/store/testdata/seaweedfs.sh
+          docker run -d --name workflows-s3 -p 9000:9000 \
+            -e AWS_ACCESS_KEY_ID=workflowstestkey -e AWS_SECRET_ACCESS_KEY=workflowstestsecret \
+            "$S3_FIXTURE_IMAGE" "${S3_FIXTURE_ARGS[@]}"
+          for i in $(seq 1 60); do curl -fsS "$B2_ENDPOINT/healthz" && break; sleep 1; done
+          curl -fsS "$B2_ENDPOINT/healthz"
+      - if: steps.token.outputs.present == 'true'
+        run: scripts/e2e.sh .workflows-stack
+      - if: failure() && steps.token.outputs.present == 'true'
+        name: stack and worker logs
+        run: |
+          tail -n 500 .bin/stack.log || true
+          tail -n 100 .bin/worker.log || true

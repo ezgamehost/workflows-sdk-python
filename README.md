@@ -7,7 +7,9 @@ as code, with steps, sleeps, retries, callbacks, child workflows, parallel steps
 - Workflows are `async def` (with `Context`) or plain `def` (with `SyncContext`).
 - Speaks the EZGH Workflows protocol `1.0` and `1.1` (`ezgh_workflows.PROTOCOL_VERSIONS`).
 
-**Status:** in development, not yet published to PyPI.
+**Status:** not yet published to PyPI. Verified end to end against workflows-stack `1a97cec`
+(conformance: every push and pull scenario; the end-to-end suite: runs, retries, crashes, cancel,
+callbacks, child workflows, parallel steps, schedules and a pull worker against `workflows-stack all`).
 
 ## Writing workflows
 
@@ -194,6 +196,7 @@ uv run ruff check . && uv run ruff format --check .
 uv run mypy
 uv run pytest
 scripts/conformance.sh ~/code/workflows-stack    # workflows-stack's conformance harness (push and pull)
+DATABASE_URL=postgres://… scripts/e2e.sh ~/code/workflows-stack   # end to end against workflows-stack all
 ```
 
 The protocol vectors in `tests/vectors` are workflows-stack's, vendored verbatim by

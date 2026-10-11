@@ -67,8 +67,8 @@ from .errors import (
     decode_error,
     encode_error,
 )
-from .invocation import parse_time
-from .live import LiveIO
+from .invocation import parse_time, valid_entry
+from .live import CheckpointFailed, LiveIO
 from .threads import run_in_thread
 from .workflow import Workflow, check_timeout, definition_of, merge_retry
 
@@ -457,6 +457,8 @@ class Execution:
         while not complete:
             last = max((int(e["seq"]) for e in entries), default=0)
             page = await self.io.journal_page(last)
+            if not all(valid_entry(e) for e in page["entries"]):
+                raise CheckpointFailed("workflows-live sent a malformed journal entry")
             entries.extend(dict(e) for e in page["entries"])
             complete = bool(page.get("complete")) or not page["entries"]
         refs = [e for e in entries if isinstance(e.get("outputRef"), str)]

@@ -225,3 +225,53 @@ async def test_waits_invokes_and_new_steps_end_together_in_call_order() -> None:
     assert types(live.checkpoints[0]["commands"]) == ["callbackCreated"]
     assert types(cmds) == ["planParallel", "waitForCallback", "invoke"]
     assert [s["name"] for s in cmds[0]["steps"]] == ["r1", "r2"]
+
+
+async def test_callback_creation_replays_at_created_seq() -> None:
+    import asyncio
+
+    @workflow("branches")
+    async def branches(ctx: Context) -> Any:
+        async def first() -> Any:
+            cb = await ctx.step.create_callback("approval", timeout=60_000)
+            log = await ctx.step.run("log", lambda: "A")
+            await cb.wait()
+            return log
+
+        async def second() -> Any:
+            await ctx.step.run("prep", lambda: "P")
+            return await ctx.step.run("log", lambda: "B")
+
+        a, b = await asyncio.gather(first(), second())
+        return {"a": a, "b": b}
+
+    live = FakeLive()
+    cmds = await execute(invocation("branches"), branches, live)
+    assert types(live.checkpoints[0]["commands"]) == ["callbackCreated"]
+    assert [s["name"] for s in cmds[0]["steps"]] == ["prep", "log"] and cmds[0]["steps"][1]["stepId"] == sid("log", 0)
+    tok = f"{shard_of(RUN_ID):03x}." + "C" * 43
+    journal = [
+        entry(5, "approval", kind="callback", output={"ok": True}, token=tok, createdSeq=1),
+        entry(2, "log", output="A"),
+        entry(3, "prep", output="P"),
+        entry(4, "log", n=1, output="B"),
+    ]
+    assert await execute(invocation("branches", entries=journal), branches, FakeLive()) == [
+        {"type": "runCompleted", "output": {"a": "A", "b": "B"}}
+    ]
+
+
+def test_created_seq_must_be_at_least_one() -> None:
+    import json
+
+    import pytest
+
+    from ezgh_workflows._runtime.invocation import InvalidInvocation, parse_invocation
+
+    tok = f"{shard_of(RUN_ID):03x}." + "C" * 43
+    for bad in (0, -1, "1", True):
+        inv = invocation("x", entries=[entry(2, "a", kind="callback", status="waiting", token=tok, createdSeq=bad)])
+        with pytest.raises(InvalidInvocation):
+            parse_invocation(json.dumps(inv))
+    ok = invocation("x", entries=[entry(2, "a", kind="callback", status="waiting", token=tok, createdSeq=1)])
+    parse_invocation(json.dumps(ok))

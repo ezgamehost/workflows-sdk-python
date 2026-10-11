@@ -27,6 +27,17 @@ def _int(v: object) -> bool:
     return isinstance(v, int) and not isinstance(v, bool)
 
 
+def valid_entry(e: object) -> bool:
+    """What replay relies on in a journal entry: seq, stepId, status, and a callback's createdSeq
+    (protocol 1.1, P2: where its creation replays) a whole number >= 1 when present."""
+    if not (isinstance(e, dict) and _int(e.get("seq")) and isinstance(e.get("stepId"), str)):
+        return False
+    if not isinstance(e.get("status"), str):
+        return False
+    created = e.get("createdSeq")
+    return created is None or (_int(created) and created >= 1)
+
+
 def parse_invocation(text: str | bytes) -> Invocation:
     try:
         v = json.loads(text)
@@ -61,13 +72,8 @@ def parse_invocation(text: str | bytes) -> Invocation:
         ):
             raise InvalidInvocation("Missing journal")
         for entry in journal["entries"]:
-            if not (
-                isinstance(entry, dict)
-                and _int(entry.get("seq"))
-                and isinstance(entry.get("stepId"), str)
-                and isinstance(entry.get("status"), str)
-            ):
-                raise InvalidInvocation("A journal entry needs seq, stepId and status")
+            if not valid_entry(entry):
+                raise InvalidInvocation("A journal entry needs seq, stepId and status (and createdSeq >= 1 if set)")
         sched = run.get("schedule")
         if sched is not None:
             if not (isinstance(sched, dict) and isinstance(sched.get("id"), str)):

@@ -140,3 +140,14 @@ def test_invocations_parse_and_unknown_fields_are_ignored() -> None:
     for inv in msgs["invocation"]["invalid"]:
         with pytest.raises(InvalidInvocation):
             parse_invocation(json.dumps(inv))
+
+
+def test_poll_requests_are_checked_like_the_live_host() -> None:
+    from ezgh_workflows.protocol._validate import check_poll_request
+
+    v = vector("messages")["pollRequest"]
+    for r in v["valid"]:
+        check_poll_request(r)
+    for r in v["invalid"]:
+        with pytest.raises(ValueError):
+            check_poll_request(r)

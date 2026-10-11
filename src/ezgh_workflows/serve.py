@@ -18,6 +18,7 @@ from ._version import SDK_NAME, SDK_VERSION
 from .protocol import PROTOCOL_VERSIONS
 from .protocol._codec import dumps_bytes
 from .protocol._signature import SIGNATURE_HEADER, SignatureError, decode_secret, parse_signature, verify_parsed
+from .protocol._validate import MAX_WORKFLOWS
 
 Scope = MutableMapping[str, Any]
 Message = MutableMapping[str, Any]
@@ -106,6 +107,8 @@ def serve(
         if d.name in by_name:
             raise ValueError(f'Two workflows are named "{d.name}"')
         by_name[d.name] = wf
+    if len(by_name) > MAX_WORKFLOWS:
+        raise ValueError(f"An app serves at most {MAX_WORKFLOWS} workflows")
     if not isinstance(signing_secrets, list | tuple) or not signing_secrets:
         raise ValueError("serve() needs at least one signing secret")
     keys = [decode_secret(s) for s in signing_secrets if s]  # a malformed secret fails now

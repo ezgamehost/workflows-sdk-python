@@ -35,6 +35,7 @@ from .client import DEFAULT_BASE_URL, Client, WorkflowsApiError
 from .protocol import PROTOCOL_VERSIONS
 from .protocol._codec import dumps_bytes
 from .protocol._ids import QUEUE_NAME, WORKER_ID, is_uuid
+from .protocol._validate import check_poll_request
 
 DEFAULT_LIVE_URL = "https://workflows-live.ezghcloud.com"
 POLL_TIMEOUT = 70.0  # the live host holds a poll up to 55 s
@@ -138,6 +139,7 @@ class Worker:
         self._hb, self._grace, self._backoff_max = float(heartbeat_interval), float(shutdown_grace), float(backoff_max)
         self._max_steps, self._api_base = max_steps_per_invocation, api_base_url
         self._on_error = on_error
+        check_poll_request(self._poll_body(max_tasks))  # what the live host would refuse fails now
         self._stop = threading.Event()
         self._stopping: asyncio.Event | None = None
         self._loop: asyncio.AbstractEventLoop | None = None

@@ -17,7 +17,9 @@ def main() -> None:
         max_retry_delay=2,
     )
     stamp = int(time.time() * 1000)
-    created = client.create_app(f"e2e-{stamp}", endpoint=os.environ.get("E2E_APP", "http://127.0.0.1:3200/"))
+    created = client.create_app(
+        f"e2e-{stamp}", endpoint=os.environ.get("E2E_APP", "http://127.0.0.1:3200").rstrip("/") + "/"
+    )
     secret = created["signingSecret"]
     if not secret:
         raise SystemExit("create_app returned no signing secret")

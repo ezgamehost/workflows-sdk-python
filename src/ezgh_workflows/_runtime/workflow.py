@@ -9,10 +9,10 @@ from weakref import WeakKeyDictionary
 from ..protocol._codec import DEFAULT_RETRY
 from ..protocol._ids import WORKFLOW_NAME
 from ..protocol._types import RetryPolicy
+from ..protocol._validate import check_retry
 
 # The longest step timeout: a pull invocation's deadline is at most 24 hours.
 MAX_TIMEOUT_MS = 86_400_000
-_MAX_SAFE_INTEGER = 2**53 - 1
 
 
 @dataclass(frozen=True)
@@ -44,29 +44,6 @@ def definition_of(wf: Workflow) -> WorkflowDefinition:
     if d is None:
         raise TypeError("Not a workflow: define workflows with @workflow(name)")
     return d
-
-
-def _number(v: Any, lo: float, hi: float, integer: bool) -> bool:
-    if not isinstance(v, int | float) or isinstance(v, bool):
-        return False
-    if v != v or not lo <= v <= hi:  # NaN, or out of range
-        return False
-    return not integer or float(v).is_integer()
-
-
-def check_retry(p: Mapping[str, Any]) -> None:
-    """The protocol's bounds (validate.go): maxAttempts 1-100, initialMs >= 0, maxMs 0-86,400,000,
-    multiplier 1-10."""
-    if not (
-        _number(p["maxAttempts"], 1, 100, True)
-        and _number(p["initialMs"], 0, _MAX_SAFE_INTEGER, True)
-        and _number(p["maxMs"], 0, 86_400_000, True)
-        and _number(p["multiplier"], 1, 10, False)
-    ):
-        raise ValueError(
-            "A retry policy has integer maxAttempts 1-100, integer initialMs >= 0, "
-            "integer maxMs 0-86,400,000 and multiplier 1-10"
-        )
 
 
 def merge_retry(base: RetryPolicy, over: Mapping[str, Any] | None) -> RetryPolicy:

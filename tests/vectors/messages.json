@@ -630,6 +630,38 @@
             "name": "bad name"
           }
         ]
+      },
+      {
+        "app": "0199a3d0-2b3c-7d4e-9f50-6b7c8d9e0f1a",
+        "queue": "default",
+        "maxTasks": 1,
+        "workerId": "w-1",
+        "protocolVersions": [
+          "1.1"
+        ],
+        "sdk": {
+          "name": "nnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnn",
+          "version": "0.1.0"
+        }
+      },
+      {
+        "app": "0199a3d0-2b3c-7d4e-9f50-6b7c8d9e0f1a",
+        "queue": "default",
+        "maxTasks": 1,
+        "workerId": "w-1",
+        "protocolVersions": [
+          "1.1"
+        ],
+        "sdk": {
+          "name": "go",
+          "version": "0.1.0"
+        },
+        "workflows": [
+          {
+            "name": "etl",
+            "timeoutMs": -1
+          }
+        ]
       }
     ]
   },

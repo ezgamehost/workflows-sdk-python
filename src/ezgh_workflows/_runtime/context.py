@@ -1,7 +1,6 @@
 """What workflow code sees: Context (async def workflows) and SyncContext (plain def)."""
 
 import asyncio
-import concurrent.futures
 import threading
 from collections.abc import Awaitable, Callable, Mapping
 from contextvars import ContextVar
@@ -121,62 +120,43 @@ class Step(_StepInfo):
         id: str | None = None,
     ) -> "asyncio.Future[Any]":
         """Runs fn at least once and records its JSON result; on replay the result returns without
-        running fn. Plain functions run in a thread; coroutine functions on the event loop."""
-        return self._ex.register_run(name, fn, retry, timeout_ms, id)
+        running fn. Plain functions run in a thread; coroutine functions on the caller's loop."""
+        return self._ex.call_async(lambda: self._ex.register_run(name, fn, retry, timeout_ms, id))
 
     def sleep(self, name: str, duration: str | int, *, id: str | None = None) -> "asyncio.Future[None]":
         """A durable sleep (at most a year): "500ms", "30s", "5m", "2h", "3d", or milliseconds."""
-        return self._ex.register_sleep(name, duration, None, id)
+        return self._ex.call_async(lambda: self._ex.register_sleep(name, duration, None, id))
 
     def sleep_until(self, name: str, at: datetime | str, *, id: str | None = None) -> "asyncio.Future[None]":
-        return self._ex.register_sleep(name, None, at, id)
+        return self._ex.call_async(lambda: self._ex.register_sleep(name, None, at, id))
 
     def now(self, name: str) -> "asyncio.Future[datetime]":
         """The current time (UTC, millisecond precision), recorded: the same on every replay."""
-        return self._ex.register_value(name, "now")
+        return self._ex.call_async(lambda: self._ex.register_value(name, "now"))
 
     def uuid(self, name: str) -> "asyncio.Future[str]":
         """A random UUID, recorded: the same on every replay."""
-        return self._ex.register_value(name, "uuid")
+        return self._ex.call_async(lambda: self._ex.register_value(name, "uuid"))
 
     def create_callback(
         self, name: str, *, timeout: str | int = "7d", id: str | None = None
     ) -> "asyncio.Future[Callback]":
         """A callback URL (protocol 1.1): recorded before the URL is visible. timeout is 1 s to 1 year."""
-        return self._ex.register_callback(name, timeout, id, sync=False)
+        return self._ex.call_async(lambda: self._ex.register_callback(name, timeout, id, sync=False))
 
     def invoke(
         self, name: str, *, workflow: "str | Any", input: Any = None, id: str | None = None
     ) -> "asyncio.Future[Any]":
         """Runs a child workflow of the same app and returns its output, or raises ChildFailedError
         (protocol 1.1)."""
-        return self._ex.register_invoke(name, workflow, input, id)
+        return self._ex.call_async(lambda: self._ex.register_invoke(name, workflow, input, id))
 
 
 class SyncStep(_StepInfo):
     """Step's calls, blocking, for plain def workflows; parallel() runs several steps at once."""
 
-    def __init__(self, ex: "Execution", loop: asyncio.AbstractEventLoop) -> None:
-        self._ex, self._loop = ex, loop
-
-    def _block(self, register: Callable[[], "asyncio.Future[Any]"]) -> Any:
-        if self._ex.closed:
-            raise InvocationEnded()
-        ex = self._ex
-
-        async def go() -> Any:
-            fut = register()
-            ex.sync_parked()
-            try:
-                return await fut
-            finally:
-                ex.sync_resumed()
-
-        try:
-            cf: concurrent.futures.Future[Any] = asyncio.run_coroutine_threadsafe(go(), self._loop)
-        except RuntimeError:  # the loop is closed: the invocation is long over
-            raise InvocationEnded() from None
-        return cf.result()
+    def __init__(self, ex: "Execution") -> None:
+        self._ex = ex
 
     def run(
         self,
@@ -187,38 +167,38 @@ class SyncStep(_StepInfo):
         timeout_ms: int | None = None,
         id: str | None = None,
     ) -> Any:
-        return self._block(lambda: self._ex.register_run(name, fn, retry, timeout_ms, id))
+        return self._ex.call_sync([lambda: self._ex.register_run(name, fn, retry, timeout_ms, id)])[0]
 
     def sleep(self, name: str, duration: str | int, *, id: str | None = None) -> None:
-        self._block(lambda: self._ex.register_sleep(name, duration, None, id))
+        self._ex.call_sync([lambda: self._ex.register_sleep(name, duration, None, id)])
 
     def sleep_until(self, name: str, at: datetime | str, *, id: str | None = None) -> None:
-        self._block(lambda: self._ex.register_sleep(name, None, at, id))
+        self._ex.call_sync([lambda: self._ex.register_sleep(name, None, at, id)])
 
     def now(self, name: str) -> datetime:
-        v: datetime = self._block(lambda: self._ex.register_value(name, "now"))
+        v: datetime = self._ex.call_sync([lambda: self._ex.register_value(name, "now")])[0]
         return v
 
     def uuid(self, name: str) -> str:
-        v: str = self._block(lambda: self._ex.register_value(name, "uuid"))
+        v: str = self._ex.call_sync([lambda: self._ex.register_value(name, "uuid")])[0]
         return v
 
     def create_callback(self, name: str, *, timeout: str | int = "7d", id: str | None = None) -> SyncCallback:
-        cb: SyncCallback = self._block(lambda: self._ex.register_callback(name, timeout, id, sync=True))
+        cb: SyncCallback = self._ex.call_sync([lambda: self._ex.register_callback(name, timeout, id, sync=True)])[0]
         return cb
 
     def invoke(self, name: str, *, workflow: "str | Any", input: Any = None, id: str | None = None) -> Any:
-        return self._block(lambda: self._ex.register_invoke(name, workflow, input, id))
+        return self._ex.call_sync([lambda: self._ex.register_invoke(name, workflow, input, id)])[0]
 
     def parallel(self, *branches: tuple[str, Callable[[], Any]]) -> list[Any]:
-        """Runs each (name, fn) as its own step, concurrently; returns the results in branch order."""
+        """Runs each (name, fn) as its own step, concurrently; returns the results in branch order.
+        The first failure (in the order they were recorded) is raised."""
+        ex = self._ex
 
-        def register_all() -> "asyncio.Future[Any]":
-            futs = [self._ex.register_run(n, f, None, None, None) for n, f in branches]
-            return asyncio.gather(*futs)
+        def reg(n: str, f: Callable[[], Any]) -> Callable[[], Any]:
+            return lambda: ex.register_run(n, f, None, None, None)
 
-        out: list[Any] = self._block(register_all)
-        return out
+        return ex.call_sync([reg(n, f) for n, f in branches])
 
 
 @dataclass(frozen=True)

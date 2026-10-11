@@ -86,9 +86,15 @@ Catch it (or use `finally`) to run `step.run` cleanup steps; other primitives ra
   step it's waiting on is planned at once, each as its own invocation (at most 32 at once per run).
   Replay resolves recorded outcomes one at a time in the order they were recorded, so a race sees
   the same winner every time.
-- **Plain step functions run in a thread of their own,** so a long step never blocks the event loop
-  (a step that outlives its `timeout_ms` is abandoned, not killed). Coroutine functions run on the
-  loop. **Sync workflows run in a dedicated thread** whose step calls block.
+- **An async workflow's own code runs on an event loop of its own, in a dedicated thread,** so the
+  SDK knows exactly when the workflow is idle (every task waits on a step nobody has resolved),
+  however deeply its tasks nest: that decides which steps are planned together. Workflow code
+  outside steps must not await objects bound to your server's loop (it shouldn't do I/O at all);
+  step functions run where you'd expect: **plain step functions in a thread of their own,** so a
+  long step never blocks anything (a step that outlives its `timeout_ms` is abandoned, not
+  killed), and **coroutine step functions on your server's loop**. Calling `ctx.step` from inside a
+  step function raises `RuntimeError`. **Sync workflows run in a dedicated thread** whose step calls
+  block.
 - **Cancellation is `RunCancelledError`, an `Exception`, deliberately not `asyncio.CancelledError`:**
   `except Exception` and `finally` see it, and it never cancels asyncio tasks. Its wire name is
   `CancelledError` and its code `workflows.cancelled`. An `asyncio.CancelledError` reaching the
@@ -102,7 +108,8 @@ Catch it (or use `finally`) to run `step.run` cleanup steps; other primitives ra
   fractional digits and `Z`, like JavaScript's `toISOString`; microseconds are truncated) and a `date`
   (`YYYY-MM-DD`). Anything else (a naive `datetime`, `Decimal`, `set`, `bytes`, NaN, ...) fails the
   step with `workflows.non_retriable`. The live value is replaced by the wire value, so the live and
-  replayed values are identical (a `datetime` comes back as a `str` both times).
+  replayed values are identical (a `datetime` comes back as a `str` both times, and a `StrEnum` or
+  `IntEnum` as a plain `str` or `int`).
 - **Invalid arguments raise `ValueError`** (names, durations, ids, policies) and wrong types
   `TypeError`; either fails the run with code `user`.
 - **Every limit is the engine's, in UTF-8 bytes** (workflows-stack `internal/protocol/validate.go`):
@@ -152,10 +159,13 @@ worker.run_sync()                           # or: await worker.run(); worker.sto
 - While an invocation runs, the worker heartbeats every `heartbeat_interval` seconds (default 20; the
   engine's timeout is 60). When the run is cancelled, the running step's `ctx.step.cancelled()`
   turns true, so a long step can stop early.
-- `stop()`, SIGTERM or SIGINT stop polling at once; running invocations get `shutdown_grace` seconds
-  (default 30), and the engine re-dispatches anything abandoned after its heartbeat timeout.
-- A poll answered 401 (twice) or 403 raises `WorkflowsApiError` from `run()`; 429, 5xx and network
-  errors are retried with jittered backoff up to `backoff_max` seconds.
+- `stop()`, SIGTERM or SIGINT stop polling at once: a long poll in flight is aborted, and tasks it
+  had already received still run. Running invocations get `shutdown_grace` seconds (default 30),
+  and the engine re-dispatches anything abandoned after its heartbeat timeout.
+- A poll answered 401 (twice), 403, another 4xx, a redirect or a 1xx raises `WorkflowsApiError`
+  from `run()`. 429, 5xx, network errors and 2xx answers that aren't poll answers are retried
+  after `max(Retry-After, backoff)`, the backoff doubling from 0.5 s to `backoff_max` with ±20 %
+  jitter. `heartbeat_interval` is at most 30 s (the engine's heartbeat timeout is 60 s).
 - **Dev mode:** `Worker.dev(api_key=..., organization_id=..., project_id=..., workflows=[...])`
   finds or creates the pull app `dev-<user>` with the queue of the same name, so two laptops never
   take each other's runs.

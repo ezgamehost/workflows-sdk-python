@@ -16,13 +16,18 @@ DEFAULT_RETRY: RetryPolicy = {"maxAttempts": 5, "initialMs": 1000, "maxMs": 600_
 def iso_ms(dt: datetime) -> str:
     """An aware datetime as JavaScript's toISOString: UTC, exactly 3 fractional digits, Z."""
     u = dt.astimezone(UTC)
-    return u.strftime("%Y-%m-%dT%H:%M:%S.") + f"{u.microsecond // 1000:03d}Z"
+    return _iso(u, u.microsecond // 1000)
+
+
+def _iso(u: datetime, ms: int) -> str:
+    # Explicit fields: strftime's %Y doesn't zero-pad years before 1000 on every platform.
+    return f"{u.year:04d}-{u.month:02d}-{u.day:02d}T{u.hour:02d}:{u.minute:02d}:{u.second:02d}.{ms:03d}Z"
 
 
 def iso_from_ms(ms: int) -> str:
     """Epoch milliseconds as toISOString (exact: no float rounding)."""
     secs, rem = divmod(ms, 1000)
-    return datetime.fromtimestamp(secs, UTC).strftime("%Y-%m-%dT%H:%M:%S.") + f"{rem:03d}Z"
+    return _iso(datetime.fromtimestamp(secs, UTC), rem)
 
 
 def encode_value(v: object) -> Any:

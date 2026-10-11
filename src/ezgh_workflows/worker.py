@@ -24,14 +24,14 @@ from email.utils import parsedate_to_datetime
 from typing import Any
 
 from ._env import clean_deployment, detect_deployment
-from ._http import HttpError, Response, request
+from ._http import AbortableRequest, HttpError, Response, request
 from ._runtime.execution import execute
 from ._runtime.invocation import InvalidInvocation, parse_invocation, parse_time
 from ._runtime.live import CheckpointFailed, HttpLive, InvocationSuperseded, retry_after_seconds
 from ._runtime.threads import run_in_thread
 from ._runtime.workflow import Workflow, definition_of, workflow_info
 from ._version import SDK_NAME, SDK_VERSION
-from .client import DEFAULT_BASE_URL, Client, WorkflowsApiError
+from .client import DEFAULT_BASE_URL, Client, WorkflowsApiError, _Secret
 from .protocol import PROTOCOL_VERSIONS
 from .protocol._codec import dumps_bytes
 from .protocol._ids import QUEUE_NAME, WORKER_ID, is_uuid
@@ -41,6 +41,8 @@ DEFAULT_LIVE_URL = "https://workflows-live.ezghcloud.com"
 POLL_TIMEOUT = 70.0  # the live host holds a poll up to 55 s
 MAX_POLL_TASKS = 10  # validate.go MaxPollTasks
 COMPLETE_GRACE = 30.0  # completes are retried until the deadline plus this
+STOP_READ_SECONDS = 0.25  # on stop(), how long an in-flight poll may finish before it's aborted
+MAX_HEARTBEAT_INTERVAL = 30.0  # the engine fails an invocation after 60 s without a heartbeat
 log = logging.getLogger("ezgh_workflows")
 
 
@@ -119,8 +121,11 @@ class Worker:
         ):
             if not isinstance(v, int | float) or not v >= 0 or v != v:
                 raise ValueError(f"{name} is a number of seconds >= 0")
-        if heartbeat_interval <= 0:
-            raise ValueError("heartbeat_interval is a number of seconds > 0")
+        if not 0 < heartbeat_interval <= MAX_HEARTBEAT_INTERVAL:
+            raise ValueError(
+                f"heartbeat_interval is 0-{MAX_HEARTBEAT_INTERVAL:g} seconds, well inside the engine's 60 s "
+                "heartbeat timeout"
+            )
         if not isinstance(max_steps_per_invocation, int) or max_steps_per_invocation < 1:
             raise ValueError("max_steps_per_invocation is a whole number >= 1")
         self._by_name: dict[str, Workflow] = {}
@@ -129,7 +134,7 @@ class Worker:
             if d.name in self._by_name:
                 raise ValueError(f'Two workflows are named "{d.name}"')
             self._by_name[d.name] = wf
-        self._key = api_key
+        self._key = _Secret(api_key)  # never in repr()
         org, prj = urllib.parse.quote(organization_id, safe=""), urllib.parse.quote(project_id, safe="")
         self._poll_url = f"{live_url.rstrip('/')}/v1/organizations/{org}/projects/{prj}/workers/poll"
         self._app, self._queue, self._max_tasks, self._concurrency = app, queue, max_tasks, concurrency
@@ -186,7 +191,8 @@ class Worker:
         )
 
     def stop(self) -> None:
-        """Stops polling at once; running invocations get shutdown_grace seconds. Thread-safe."""
+        """Stops polling at once (a long poll in flight is aborted); running invocations get
+        shutdown_grace seconds. Thread-safe."""
         self._stop.set()
         loop, ev = self._loop, self._stopping
         if loop is not None and ev is not None:
@@ -268,23 +274,34 @@ class Worker:
                 stop.cancel()
                 continue
             body = dumps_bytes(self._poll_body(min(self._max_tasks, free)))
-            headers = {"Authorization": f"Bearer {self._key}", "Content-Type": "application/json"}
-            # A daemon thread: a poll held by the live host never delays stop() or process exit.
+            headers = {"Authorization": f"Bearer {self._key.value}", "Content-Type": "application/json"}
+            # A daemon thread whose socket stop() shuts down: a poll the live host holds never
+            # delays stop() or process exit.
+            req = AbortableRequest()
             poll = run_in_thread(
-                functools.partial(request, "POST", self._poll_url, headers, body, POLL_TIMEOUT), "ezgh-workflows-poll"
+                functools.partial(req.request, "POST", self._poll_url, headers, body, POLL_TIMEOUT),
+                "ezgh-workflows-poll",
             )
             stop = asyncio.ensure_future(self._stopping.wait())
             await asyncio.wait({poll, stop}, return_when=asyncio.FIRST_COMPLETED)
             stop.cancel()
-            if self._stopping.is_set():
-                poll.cancel()  # tasks it may still get lapse after their 30 s lease and are offered again
-                return
+            if not poll.done():
+                # Stopping. An answer already on its way is still read (its tasks run within the
+                # grace period); a poll the live host is holding is aborted.
+                await asyncio.wait({poll}, timeout=STOP_READ_SECONDS)
+                if not poll.done():
+                    req.abort()
+                    await asyncio.wait({poll}, timeout=2.0)
+                if not poll.done():
+                    return
             received = time.time()
             try:
                 res: Response = poll.result()
             except HttpError as e:
+                if self._stopping.is_set():
+                    return
                 self._error(e, "poll")
-                await self._sleep(delay * random.uniform(0.8, 1.2))
+                await self._backoff(delay, None)
                 delay = min(self._backoff_max, delay * 2)
                 continue
             if res.status in (401, 403):
@@ -292,30 +309,36 @@ class Worker:
                 unauthorized += 1
                 if res.status == 403 or unauthorized > 1:
                     raise _unauthorized(res.status)
-                await self._sleep(min(1.0, self._backoff_max))
+                await self._backoff(min(1.0, self._backoff_max), None)
                 continue
             unauthorized = 0
             if res.status == 429 or res.status >= 500:
-                wait = retry_after_seconds(res)
                 self._error(WorkflowsApiError(res.status, "unavailable", f"HTTP {res.status}"), "poll")
-                await self._sleep(min(self._backoff_max, max(wait or 0.0, delay)) * random.uniform(0.8, 1.2))
+                await self._backoff(delay, retry_after_seconds(res))
                 delay = min(self._backoff_max, delay * 2)
                 continue
-            if res.status >= 400:
+            if res.status >= 400 or res.status < 200 or res.status >= 300:
+                # 1xx, 3xx (the worker follows no redirects) and other 4xx: misconfigured, not transient.
                 raise WorkflowsApiError(res.status, _code(res), f"workflows-live refused the poll (HTTP {res.status})")
+            if res.status == 204:
+                delay = 0.5
+                continue
+            invs = _invocations(res.body)
+            if invs is None:  # a 2xx that isn't a poll answer: something between us and the live host
+                self._error(ValueError(f"HTTP {res.status} with a body that isn't a poll answer"), "poll answer")
+                await self._backoff(delay, None)
+                delay = min(self._backoff_max, delay * 2)
+                continue
             delay = 0.5
-            if res.status == 204 or not res.body:
-                continue
-            try:
-                invs = json.loads(res.body).get("invocations") or []
-            except (ValueError, AttributeError, UnicodeDecodeError) as e:
-                self._error(e, "poll answer")
-                continue
             skew = _skew(res, received)
-            for raw in invs if isinstance(invs, list) else []:
+            for raw in invs:  # received even while stopping: they run within the grace period
                 task = asyncio.ensure_future(self._handle(raw, received, skew))
                 self._inflight.add(task)
                 task.add_done_callback(self._inflight.discard)
+
+    async def _backoff(self, delay: float, retry_after: float | None) -> None:
+        """Waits max(Retry-After, the capped backoff with +-20 % jitter), or until stop()."""
+        await self._sleep(max(retry_after or 0.0, min(self._backoff_max, delay) * random.uniform(0.8, 1.2)))
 
     async def _post(self, url: str, token: str, body: Any, until: float) -> Response | None:
         """POST with the invocation token; 429, 5xx and network errors are retried until `until`."""
@@ -439,6 +462,20 @@ class Worker:
                     cancel.set()
             except (ValueError, AttributeError, UnicodeDecodeError):
                 pass
+
+
+def _invocations(body: bytes) -> list[Any] | None:
+    """A poll answer's invocations: {"invocations": [...]}, else None."""
+    try:
+        v = json.loads(body) if body else None
+    except (ValueError, UnicodeDecodeError):
+        return None
+    if not isinstance(v, dict):
+        return None
+    invs = v.get("invocations")
+    if invs is None:
+        return []
+    return invs if isinstance(invs, list) else None
 
 
 def _code(res: Response) -> str:

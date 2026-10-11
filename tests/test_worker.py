@@ -233,8 +233,10 @@ def test_options_are_checked() -> None:
     ):
         with pytest.raises(ValueError):
             Worker(**{**base, **bad})
-    w = Worker(**base)
-    assert "ezgh_secretkey" not in repr(w)
+    w = Worker(**{**base, "api_key": "ezgh_live_8f3k2m9q7x1v5b6n4c0z2a8s"})
+    assert "ezgh_live_8f3k2m9q7x1v5b6n4c0z2a8s" not in repr(w) + str(vars(w)) + repr(w._key)
+    with pytest.raises(ValueError):
+        Worker(**{**base, "heartbeat_interval": 45})
     import re
 
     assert re.fullmatch(r"[A-Za-z0-9._:-]{1,128}", w.worker_id)
@@ -307,3 +309,122 @@ async def test_a_superseded_heartbeat_stops_the_step_and_reports_nothing() -> No
     w.stop()
     await asyncio.wait_for(task, 5)
     assert host.completed == []
+
+
+class ScriptedHost:
+    """Answers every poll with one scripted response (status, extra headers, body), optionally
+    holding it; records when polls arrive and whether the client went away while held."""
+
+    def __init__(self, status: int, headers: str = "", body: bytes = b"", hold: float = 0.0) -> None:
+        self.status, self.headers, self.body, self.hold = status, headers, body, hold
+        self.times: list[float] = []
+        self.went_away = 0
+
+    async def start(self) -> None:
+        self.server = await asyncio.start_server(self.handle, "127.0.0.1", 0)
+        self.port = self.server.sockets[0].getsockname()[1]
+
+    async def handle(self, r: asyncio.StreamReader, w: asyncio.StreamWriter) -> None:
+        head = (await r.readuntil(b"\r\n\r\n")).decode()
+        n = next((int(x.split(":")[1]) for x in head.split("\r\n") if x.lower().startswith("content-length")), 0)
+        await r.readexactly(n)
+        self.times.append(time.monotonic())
+        if self.hold:
+            try:
+                await asyncio.wait_for(r.read(1), self.hold)
+                self.went_away += 1
+                w.close()
+                return
+            except TimeoutError:
+                pass
+        out = f"HTTP/1.1 {self.status} X\r\n{self.headers}Content-Length: {len(self.body)}\r\nConnection: close\r\n\r\n"
+        w.write(out.encode() + self.body)
+        await w.drain()
+        w.close()
+
+
+def scripted_worker(host: ScriptedHost, errors: list[str], **kw: Any) -> Worker:
+    return Worker(
+        api_key="ezgh_x",
+        organization_id=ORG,
+        project_id=PRJ,
+        app=APP,
+        workflows=[pulled],
+        queue="conformance",
+        live_url=f"http://127.0.0.1:{host.port}",
+        worker_id="w-1",
+        on_error=lambda e, c: errors.append(c),
+        **kw,
+    )
+
+
+@pytest.mark.parametrize("status", [301, 308, 101])
+async def test_redirects_and_informational_answers_stop_the_worker(status: int) -> None:
+    host = ScriptedHost(status, "Location: https://example.invalid/\r\n" if status != 101 else "")
+    await host.start()
+    with pytest.raises(WorkflowsApiError) as e:
+        await asyncio.wait_for(scripted_worker(host, []).run(), 5)
+    assert e.value.status in (status, 0) and len(host.times) == 1
+
+
+@pytest.mark.parametrize("body", [b"[]", b"not json", b'{"invocations": 5}', b"null"])
+async def test_a_2xx_that_isnt_a_poll_answer_backs_off(body: bytes) -> None:
+    host = ScriptedHost(200, "", body)
+    await host.start()
+    errors: list[str] = []
+    w = scripted_worker(host, errors, backoff_max=0.4)
+    task = asyncio.create_task(w.run())
+    await asyncio.sleep(1.5)
+    w.stop()
+    await asyncio.wait_for(task, 5)
+    assert 2 <= len(host.times) <= 6 and "poll answer" in errors
+
+
+async def test_retry_after_paces_unavailable_polls() -> None:
+    host = ScriptedHost(503, "Retry-After: 1\r\n", b'{"error":{"code":"unavailable"}}')
+    await host.start()
+    w = scripted_worker(host, [], backoff_max=0.2)  # a short backoff never cuts below Retry-After
+    task = asyncio.create_task(w.run())
+    await asyncio.sleep(3.2)
+    w.stop()
+    await asyncio.wait_for(task, 5)
+    gaps = [b - a for a, b in zip(host.times, host.times[1:], strict=False)]
+    assert len(host.times) <= 4 and all(g >= 0.95 for g in gaps), gaps
+
+
+async def test_stop_aborts_a_held_poll() -> None:
+    host = ScriptedHost(204, hold=5.0)
+    await host.start()
+    w = scripted_worker(host, [])
+    task = asyncio.create_task(w.run())
+    await asyncio.sleep(0.3)
+    t0 = time.monotonic()
+    w.stop()
+    await asyncio.wait_for(task, 3)
+    await asyncio.sleep(0.2)
+    assert time.monotonic() - t0 < 1.0 and host.went_away == 1
+
+
+async def test_tasks_received_as_the_worker_stops_still_run() -> None:
+    host = FakeLiveHost()
+    await host.start()
+    w = worker(host)
+    host.answers = [(200, {"invocations": [host.task("pulled")]})]
+    original = host.handle
+
+    async def slow_poll(r: asyncio.StreamReader, wr: asyncio.StreamWriter) -> None:
+        peek = await r.readuntil(b"\r\n\r\n")
+        n = next((int(x.split(b":")[1]) for x in peek.split(b"\r\n") if x.lower().startswith(b"content-length")), 0)
+        reader = asyncio.StreamReader()
+        reader.feed_data(peek + (await r.readexactly(n) if n else b""))
+        reader.feed_eof()
+        await original(reader, wr)
+        if b"/workers/poll" in peek.split(b"\r\n")[0]:
+            w.stop()  # stop() arrives as the poll's answer (with a task) does
+
+    host.server.close()
+    host.server = await asyncio.start_server(slow_poll, "127.0.0.1", host.port)
+    task = asyncio.create_task(w.run())
+    await asyncio.wait_for(task, 10)
+    assert len(host.completed) == 1, (host.polls, host.checkpoints, host.answers)
+    assert host.completed[0]["commands"][-1]["type"] == "runCompleted"

@@ -72,6 +72,19 @@ def check_timeout(ms: Any) -> int:
     return ms
 
 
+def is_async_callable(fn: Any) -> bool:
+    """An async def, also behind functools.wraps decorators or as an object's async __call__."""
+    seen = inspect.unwrap(fn) if callable(fn) else fn
+    if inspect.iscoroutinefunction(seen) or inspect.iscoroutinefunction(fn):
+        return True
+    if not inspect.isroutine(seen) and not inspect.isclass(seen):
+        call = type(seen).__dict__.get("__call__") or next(
+            (k.__dict__["__call__"] for k in type(seen).__mro__ if "__call__" in k.__dict__), None
+        )
+        return call is not None and inspect.iscoroutinefunction(call)
+    return False
+
+
 def workflow(
     name: str, *, retry: Mapping[str, Any] | None = None, timeout_ms: int | None = None
 ) -> Callable[[Callable[..., Any]], Workflow]:
@@ -88,7 +101,7 @@ def workflow(
         if not callable(fn):
             raise TypeError("@workflow decorates a function")
         wf = Workflow(name)
-        _DEFINITIONS[wf] = WorkflowDefinition(name, fn, inspect.iscoroutinefunction(fn), merged, t)
+        _DEFINITIONS[wf] = WorkflowDefinition(name, fn, is_async_callable(fn), merged, t)
         return wf
 
     return wrap

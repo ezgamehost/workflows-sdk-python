@@ -92,7 +92,8 @@ def rfc3339_nano(t: "datetime | str") -> str:
         raise ValueError("an aware time is needed")
     u = t.astimezone(UTC)
     frac = f"{u.microsecond:06d}".rstrip("0")
-    return u.strftime("%Y-%m-%dT%H:%M:%S") + (f".{frac}" if frac else "") + "Z"
+    base = f"{u.year:04d}-{u.month:02d}-{u.day:02d}T{u.hour:02d}:{u.minute:02d}:{u.second:02d}"
+    return base + (f".{frac}" if frac else "") + "Z"
 
 
 def scheduled_run_id(schedule_id: str, scheduled_time: "datetime | str") -> str:

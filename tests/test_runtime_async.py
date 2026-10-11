@@ -547,3 +547,123 @@ async def test_only_cleanup_steps_run_while_cancelling_even_beside_a_retrying_on
     cmds = await execute(invocation("cleanupmix", entries=journal, cancel=True), cleanupmix, live)
     assert all(c["type"] != "valueRecorded" for cp in live.checkpoints for c in cp["commands"])
     assert cmds[-1] == {"type": "runCompleted", "output": "RunCancelledError"}
+
+
+async def test_quiescence_doesnt_depend_on_how_deep_the_tasks_nest() -> None:
+    def make(depth: int) -> Any:
+        @workflow(f"deep-{depth}")
+        async def deep(ctx: Context) -> Any:
+            async def chain(n: int) -> Any:
+                if n == 0:
+                    return await ctx.step.run("b", lambda: "b")
+                return await asyncio.create_task(chain(n - 1))
+
+            return await asyncio.gather(ctx.step.run("a", lambda: "a"), chain(depth))
+
+        return deep
+
+    for depth in (1, 16, 64):
+        deep = make(depth)
+
+        cmds = await execute(invocation(f"deep-{depth}"), deep, FakeLive())
+        assert [s["name"] for s in cmds[0]["steps"]] == ["a", "b"], depth
+        replay = await execute(
+            invocation(f"deep-{depth}", entries=[entry(1, "b", output="b"), entry(2, "a", output="a")]),
+            deep,
+            FakeLive(),
+        )
+        assert replay == [{"type": "runCompleted", "output": ["a", "b"]}], depth
+
+
+async def test_live_results_are_what_a_replay_returns() -> None:
+    from enum import IntEnum, StrEnum
+
+    class Color(StrEnum):
+        RED = "red"
+
+    class Size(IntEnum):
+        BIG = 3
+
+    @workflow("enums")
+    async def enums(ctx: Context) -> Any:
+        c = await ctx.step.run("c", lambda: Color.RED)
+        s = await ctx.step.run("s", lambda: {"size": Size.BIG, "t": (1, 2)})
+        return [type(c).__name__, type(s["size"]).__name__, type(s["t"]).__name__]
+
+    assert (await execute(invocation("enums"), enums, FakeLive()))[-1]["output"] == ["str", "int", "list"]
+
+
+async def test_async_workflows_behind_wrappers_and_callables_run_as_async() -> None:
+    import functools
+
+    def logged(fn: Any) -> Any:
+        @functools.wraps(fn)
+        def wrapper(*a: Any, **k: Any) -> Any:
+            return fn(*a, **k)
+
+        return wrapper
+
+    @workflow("wrapped")
+    @logged
+    async def wrapped(ctx: Context) -> str:
+        return str(await ctx.step.run("s", lambda: "x"))
+
+    class Handler:
+        async def __call__(self, ctx: Context) -> str:
+            return str(await ctx.step.run("s", lambda: "y"))
+
+    from ezgh_workflows._runtime.workflow import definition_of
+
+    assert definition_of(wrapped).is_async
+    assert (await execute(invocation("wrapped"), wrapped, FakeLive()))[-1] == {"type": "runCompleted", "output": "x"}
+    handler = workflow("callable")(Handler())
+    assert definition_of(handler).is_async
+    assert (await execute(invocation("callable"), handler, FakeLive()))[-1] == {"type": "runCompleted", "output": "y"}
+
+
+async def test_a_plain_def_returning_an_awaitable_fails_clearly() -> None:
+    async def inner() -> int:
+        return 1
+
+    def sneaky(ctx: Any) -> Any:
+        return inner()
+
+    wf = workflow("sneaky")(sneaky)
+    cmd = (await execute(invocation("sneaky"), wf, FakeLive()))[-1]
+    assert cmd["type"] == "runFailed" and "async def" in cmd["error"]["message"]
+
+
+async def test_step_invocations_never_report_the_run_outcome() -> None:
+    # A race whose winner is journaled: replay finishes the workflow before reaching the target.
+    @workflow("racedone")
+    async def racedone(ctx: Context) -> Any:
+        a, b = ctx.step.run("a", lambda: "a"), ctx.step.run("b", lambda: "b")
+        done, _ = await asyncio.wait({a, b}, return_when=asyncio.FIRST_COMPLETED)
+        return done.pop().result()
+
+    journal = [entry(1, "b", output="b"), entry(2, "a", "running", attempt=0)]
+    inv = invocation("racedone", kind="step", target=sid("a"), entries=journal)
+    assert await execute(inv, racedone, FakeLive()) == []
+
+    @workflow("fatalstep")
+    async def fatalstep(ctx: Context) -> Any:
+        return await asyncio.gather(ctx.step.run("x", lambda: 1), ctx.step.run("x", lambda: 2))
+
+    inv = invocation("fatalstep", kind="step", target=sid("x"))
+    assert await execute(inv, fatalstep, FakeLive()) == []
+
+
+async def test_step_calls_from_a_step_function_are_refused() -> None:
+    @workflow("nested-call")
+    async def nested_call(ctx: Context) -> Any:
+        def inner() -> str:
+            try:
+                ctx.step.run("inner", lambda: 1)
+            except RuntimeError as e:
+                return str(e)
+            return "allowed"
+
+        return await ctx.step.run("outer", inner)
+
+    out = (await execute(invocation("nested-call"), nested_call, FakeLive()))[-1]["output"]
+    assert "workflow's own code" in out

@@ -1,7 +1,7 @@
 """One invocation of a workflow: replay against the journal, then run forward to the frontier.
 
 Mirrors workflows-sdk-ts's Execution (the reference) with the phase 2 rules:
-- recorded outcomes settle one at a time, lowest seq first, with the event loop run to quiescence
+- recorded outcomes settle one at a time, lowest seq first, with the workflow run to quiescence
   before each, so asyncio.wait(FIRST_COMPLETED) sees the same winner as the first time;
 - at the frontier (protocol 1.1) the oldest new call decides: a value is recorded, a callback is
   created (acknowledged before its URL is visible); otherwise one lone actionable step runs inline
@@ -11,16 +11,22 @@ Mirrors workflows-sdk-ts's Execution (the reference) with the phase 2 rules:
 - a step invocation runs exactly its target step;
 - a failed attempt ends the invocation with stepFailed; the step and time budgets end it with no
   terminal command; the workflow's return or raise ends it with runCompleted or runFailed.
+
+Quiescence is exact and depth-independent. An async workflow runs on an event loop of its own, in
+a thread of its own: it is idle when that loop has no ready callbacks (every task of the workflow
+waits on a future nothing has resolved). A sync workflow is idle when its thread waits on step
+calls none of which has an outcome yet. The driver (this module, on the caller's loop) runs steps,
+talks to workflows-live and settles calls; the two sides share state under one lock.
 """
 
 import asyncio
 import contextlib
 import inspect
+import json
 import math
 import threading
 import time
 import uuid as uuidlib
-import weakref
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -30,6 +36,7 @@ from ..protocol._bytes import utf8_len
 from ..protocol._codec import (
     DEFAULT_RETRY,
     MAX_OUTPUT_BYTES,
+    dumps_bytes,
     encode_value,
     iso_from_ms,
     json_byte_length,
@@ -65,8 +72,6 @@ from .live import LiveIO
 from .threads import run_in_thread
 from .workflow import Workflow, check_timeout, definition_of, merge_retry
 
-# Quiescence: this many consecutive event-loop turns with no new step call (at least 8, plan Y2).
-IDLE_SPINS = 16
 MAX_SLEEP_MS = 31_536_000_000  # a year: a run times out after a year at most
 MIN_CALLBACK_TIMEOUT_MS = 1_000
 MAX_RETRY_AFTER_MS = 86_400_000
@@ -74,6 +79,9 @@ MAX_PLANNED_STEPS = 1000  # validate.go MaxPlannedSteps
 DEFAULT_API_BASE = "https://workflows-api.ezghcloud.com"
 RECORDED = frozenset({"completed", "failed", "cancelled"})
 _CAUSE_STEP = "_ezgh_workflows_step_id"
+# After the invocation ends, how long the workflow's own loop may take to unwind before its
+# remaining tasks are cancelled.
+UNWIND_SECONDS = 5.0
 
 
 def _retrieve(f: "asyncio.Future[Any]") -> None:
@@ -83,30 +91,21 @@ def _retrieve(f: "asyncio.Future[Any]") -> None:
         f.exception()
 
 
-_FILTERED: "weakref.WeakSet[asyncio.AbstractEventLoop]" = weakref.WeakSet()
-
-
-def _quiet_invocation_ended(loop: asyncio.AbstractEventLoop) -> None:
-    """A task the workflow created and never awaited (a race's loser) ends with InvocationEnded
-    when its invocation suspends; that's expected, so the loop doesn't log it. Every other
-    exception goes to the handler that was there before."""
-    try:
-        if loop in _FILTERED:
-            return
-        _FILTERED.add(loop)
-    except TypeError:  # a loop that can't be weakly referenced: leave its handler alone
+def _quiet_handler(loop: asyncio.AbstractEventLoop, context: dict[str, Any]) -> None:
+    """The workflow loop's exception handler: a task the workflow never awaited (a race's loser)
+    ending with InvocationEnded when the invocation suspends is expected; anything else is logged."""
+    if isinstance(context.get("exception"), InvocationEnded | asyncio.CancelledError):
         return
-    previous = loop.get_exception_handler()
+    loop.default_exception_handler(context)
 
-    def handler(lp: asyncio.AbstractEventLoop, context: dict[str, Any]) -> None:
-        if isinstance(context.get("exception"), InvocationEnded):
-            return
-        if previous is not None:
-            previous(lp, context)
-        else:
-            lp.default_exception_handler(context)
 
-    loop.set_exception_handler(handler)
+def _apply(fut: "asyncio.Future[Any]", ok: bool, value: Any) -> None:
+    if fut.done():
+        return
+    if ok:
+        fut.set_result(value)
+    else:
+        fut.set_exception(value)
 
 
 class _StepCancelled(Exception):
@@ -128,13 +127,19 @@ def _supports_parallel(version: str) -> bool:
         return major == "1"
 
 
+def _json_copy(v: Any) -> Any:
+    """v (already encoded) through the wire and back: live values equal replayed ones, so a
+    StrEnum or numpy float comes back as the plain str or float a replay gives."""
+    return json.loads(dumps_bytes(v))
+
+
 @dataclass(eq=False)
 class _Call:
     order: int
     name: str
     kind: str  # run | sleep | value | callback | wait | invoke
     step_id: str
-    future: "asyncio.Future[Any]"
+    future: "asyncio.Future[Any] | None" = None  # async workflows: on the workflow's loop
     explicit: str | None = None
     fn: Callable[[], Any] | None = None
     retry: RetryPolicy | None = None
@@ -146,10 +151,12 @@ class _Call:
     workflow: str | None = None
     has_input: bool = False
     input: Any = None
+    outcome: tuple[bool, Any] | None = None  # set by the driver, under the lock
+    settled_n: int = 0
 
     @property
     def settled(self) -> bool:
-        return self.future.done()
+        return self.outcome is not None
 
 
 @dataclass
@@ -174,14 +181,15 @@ class Execution:
         self.d = definition_of(wf)
         self.cancel_event = cancel_event
         self.started = now()
-        self.loop = asyncio.get_running_loop()
-        _quiet_invocation_ended(self.loop)
+        self.loop = asyncio.get_running_loop()  # the driver's
         self.parallel = _supports_parallel(inv["protocolVersion"])
         api = inv["endpoints"].get("api") or api_base_url or DEFAULT_API_BASE
         self.api_base = api.rstrip("/")
+        self.lock = threading.Condition()  # guards the call registry, shared with the workflow side
         self.calls: list[_Call] = []
         self.counters: dict[str, int] = {}
         self.explicit_ids: set[str] = set()
+        self.settled_count = 0
         self.journal: dict[str, JournalEntry] = {}
         self.outbox: list[Command] = []
         self.cp_seq = 0
@@ -190,61 +198,76 @@ class Execution:
         self.fatal: WireError | None = None
         self.finished: tuple[bool, Any] | None = None
         self.crashed: BaseException | None = None  # the workflow ended with a BaseException
+        self.gone = False  # the workflow ended without a result (cancelled)
         self.closed = False
         self.activity = asyncio.Event()
-        self.parked = asyncio.Event()  # sync workflows: the thread waits on a call, or has ended
+        # async workflows: their loop and thread
+        self.wf_loop: asyncio.AbstractEventLoop | None = None
+        self.wf_thread: int | None = None
+        self.wf_closed: asyncio.Event | None = None
+        # sync workflows: the calls the thread waits on (and whether it needs all of them)
+        self.sync_waiting: list[_Call] | None = None
         self.thread_done = False
-        self.task: asyncio.Task[None] | None = None
+        self.sync_thread: int | None = None
         self._sync_step: SyncStep | None = None
 
-    # ---- registration (on the loop thread) ----
+    # ---- notifications to the driver ----
 
-    def _failed(self, e: BaseException) -> "asyncio.Future[Any]":
-        fut: asyncio.Future[Any] = self.loop.create_future()
-        fut.set_exception(e)
-        fut.add_done_callback(_retrieve)
-        return fut
+    def _notify(self) -> None:
+        with contextlib.suppress(RuntimeError):  # the driver's loop is closed: nobody listens
+            self.loop.call_soon_threadsafe(self.activity.set)
 
-    def _register(self, kind: str, name: str, explicit: str | None, **extra: Any) -> "asyncio.Future[Any]":
-        if self.closed:
-            return self._failed(InvocationEnded())
+    def _post(self, fn: Callable[..., None], *args: Any) -> None:
+        with contextlib.suppress(RuntimeError):
+            self.loop.call_soon_threadsafe(fn, *args)
+
+    # ---- registration (on the workflow's side, under the lock) ----
+
+    def _register(self, kind: str, name: str, explicit: str | None, **extra: Any) -> _Call:
         if not isinstance(name, str) or not name or utf8_len(name) > 256 or "\u0000" in name:
-            return self._failed(ValueError("A step name is 1-256 bytes of UTF-8, without NUL"))
+            raise ValueError("A step name is 1-256 bytes of UTF-8, without NUL")
         if explicit is not None and (not isinstance(explicit, str) or not STEP_ID_OVERRIDE.fullmatch(explicit)):
-            return self._failed(ValueError(f"Step ids match ^[A-Za-z0-9._:-]{{1,128}}$; got {explicit!r}"))
-        if kind in ("callback", "invoke") and not self.parallel and self.fatal is None:
-            what = "create_callback" if kind == "callback" else "invoke"
-            self.fatal = encode_error(
-                NonRetriableError(f"step.{what} needs protocol 1.1; this invocation is {self.inv['protocolVersion']}")
-            )
-        if explicit is not None:
-            sid = explicit
-            # An explicit id names one step for the whole run: reusing it, even after the first step
-            # settled, would replay the first step's outcome as the second's.
-            if self.fatal is None and explicit in self.explicit_ids:
+            raise ValueError(f"Step ids match ^[A-Za-z0-9._:-]{{1,128}}$; got {explicit!r}")
+        with self.lock:
+            if self.closed:
+                raise InvocationEnded()
+            if kind in ("callback", "invoke") and not self.parallel and self.fatal is None:
+                what = "create_callback" if kind == "callback" else "invoke"
                 self.fatal = encode_error(
-                    DuplicateStepNameError(f'The step id "{explicit}" is used twice; give each step its own id')
-                )
-            self.explicit_ids.add(explicit)
-        else:
-            n = self.counters.get(name, 0)
-            self.counters[name] = n + 1
-            sid = step_id(name, n)
-            if self.fatal is None and any(
-                not c.settled and c.explicit is None and c.kind != "wait" and c.name == name for c in self.calls
-            ):
-                self.fatal = encode_error(
-                    DuplicateStepNameError(
-                        f'Two steps named "{name}" are pending at once; give each a distinct name or an id'
+                    NonRetriableError(
+                        f"step.{what} needs protocol 1.1; this invocation is {self.inv['protocolVersion']}"
                     )
                 )
-        return self._append(_Call(len(self.calls), name, kind, sid, self.loop.create_future(), explicit, **extra))
+            if explicit is not None:
+                sid = explicit
+                # An explicit id names one step for the whole run: reusing it, even after the first
+                # step settled, would replay the first step's outcome as the second's.
+                if self.fatal is None and explicit in self.explicit_ids:
+                    self.fatal = encode_error(
+                        DuplicateStepNameError(f'The step id "{explicit}" is used twice; give each step its own id')
+                    )
+                self.explicit_ids.add(explicit)
+            else:
+                n = self.counters.get(name, 0)
+                self.counters[name] = n + 1
+                sid = step_id(name, n)
+                if self.fatal is None and any(
+                    not c.settled and c.explicit is None and c.kind != "wait" and c.name == name for c in self.calls
+                ):
+                    self.fatal = encode_error(
+                        DuplicateStepNameError(
+                            f'Two steps named "{name}" are pending at once; give each a distinct name or an id'
+                        )
+                    )
+            return self._append_locked(_Call(len(self.calls), name, kind, sid, explicit=explicit, **extra))
 
-    def _append(self, c: _Call) -> "asyncio.Future[Any]":
+    def _append_locked(self, c: _Call) -> _Call:
+        if self.wf_loop is not None:
+            c.future = self.wf_loop.create_future()
+            c.future.add_done_callback(_retrieve)
         self.calls.append(c)
-        c.future.add_done_callback(_retrieve)
-        self.activity.set()
-        return c.future
+        self._notify()
+        return c
 
     def register_run(
         self,
@@ -253,19 +276,16 @@ class Execution:
         retry: Mapping[str, Any] | None,
         timeout_ms: int | None,
         explicit: str | None,
-    ) -> "asyncio.Future[Any]":
-        try:
-            if not callable(fn):
-                raise TypeError("step.run needs a function")
-            policy = merge_retry(self.d.retry or DEFAULT_RETRY, retry)
-            t = check_timeout(timeout_ms) if timeout_ms is not None else self.d.timeout_ms
-        except (TypeError, ValueError) as e:
-            return self._failed(e)
+    ) -> _Call:
+        if not callable(fn):
+            raise TypeError("step.run needs a function")
+        policy = merge_retry(self.d.retry or DEFAULT_RETRY, retry)
+        t = check_timeout(timeout_ms) if timeout_ms is not None else self.d.timeout_ms
         return self._register("run", name, explicit, fn=fn, retry=policy, timeout_ms=t)
 
     def register_sleep(
         self, name: str, duration: str | int | None, at: datetime | str | None, explicit: str | None
-    ) -> "asyncio.Future[Any]":
+    ) -> _Call:
         now_ms = math.floor(self.now() * 1000)
         try:
             if duration is not None:
@@ -286,76 +306,113 @@ class Execution:
                 if t_ms - now_ms > MAX_SLEEP_MS:
                     raise ValueError("A sleep is at most a year")
                 until = max(t_ms, now_ms)  # a time in the past sleeps until now
-        except (TypeError, ValueError, OverflowError) as e:
-            return self._failed(e if not isinstance(e, OverflowError) else ValueError(str(e)))
+        except OverflowError as e:
+            raise ValueError(str(e)) from e
         return self._register("sleep", name, explicit, until_ms=until)
 
-    def register_value(self, name: str, what: str) -> "asyncio.Future[Any]":
+    def register_value(self, name: str, what: str) -> _Call:
         return self._register("value", name, None, produce=what)
 
-    def register_callback(
-        self, name: str, timeout: str | int, explicit: str | None, *, sync: bool
-    ) -> "asyncio.Future[Any]":
-        try:
-            ms = parse_duration(timeout)
-            if not MIN_CALLBACK_TIMEOUT_MS <= ms <= MAX_SLEEP_MS:
-                raise ValueError("A callback timeout is from 1 second to 1 year")
-        except ValueError as e:
-            return self._failed(e)
+    def register_callback(self, name: str, timeout: str | int, explicit: str | None, *, sync: bool) -> _Call:
+        ms = parse_duration(timeout)
+        if not MIN_CALLBACK_TIMEOUT_MS <= ms <= MAX_SLEEP_MS:
+            raise ValueError("A callback timeout is from 1 second to 1 year")
         return self._register("callback", name, explicit, callback_timeout_ms=ms, sync_handle=sync)
 
-    def register_invoke(self, name: str, workflow: Any, input: Any, explicit: str | None) -> "asyncio.Future[Any]":
-        try:
-            wf_name = workflow.name if isinstance(workflow, Workflow) else workflow
-            if not isinstance(wf_name, str) or not WORKFLOW_NAME.fullmatch(wf_name):
-                raise ValueError(f"step.invoke needs a workflow name matching ^[A-Za-z0-9_-]{{1,64}}$; got {wf_name!r}")
-            encoded = None
-            if input is not None:
-                try:
-                    encoded = encode_value(input)
-                except RecursionError as e:
-                    raise TypeError("step.invoke's input isn't JSON") from e
-                if json_byte_length(encoded) > MAX_OUTPUT_BYTES:
-                    raise ValueError("step.invoke's input is at most 1 MiB of JSON")
-        except (TypeError, ValueError) as e:
-            return self._failed(e)
+    def register_invoke(self, name: str, workflow: Any, input: Any, explicit: str | None) -> _Call:
+        wf_name = workflow.name if isinstance(workflow, Workflow) else workflow
+        if not isinstance(wf_name, str) or not WORKFLOW_NAME.fullmatch(wf_name):
+            raise ValueError(f"step.invoke needs a workflow name matching ^[A-Za-z0-9_-]{{1,64}}$; got {wf_name!r}")
+        encoded = None
+        if input is not None:
+            try:
+                encoded = encode_value(input)
+            except RecursionError as e:
+                raise TypeError("step.invoke's input isn't JSON") from e
+            if json_byte_length(encoded) > MAX_OUTPUT_BYTES:
+                raise ValueError("step.invoke's input is at most 1 MiB of JSON")
         return self._register("invoke", name, explicit, workflow=wf_name, has_input=input is not None, input=encoded)
 
-    def _wait_call(self, create: _Call) -> "asyncio.Future[Any]":
+    def register_wait(self, create: _Call) -> _Call:
         """Callback.wait(): a pending call on the callback's own step ID that neither advances the
         name's counter nor counts as a duplicate."""
-        if self.closed:
-            return self._failed(InvocationEnded())
-        return self._append(_Call(len(self.calls), create.name, "wait", create.step_id, self.loop.create_future()))
+        with self.lock:
+            if self.closed:
+                raise InvocationEnded()
+            return self._append_locked(_Call(len(self.calls), create.name, "wait", create.step_id))
 
-    # ---- sync workflows: is the thread waiting on a call? ----
+    # ---- the workflow side's two ways of waiting ----
 
-    def sync_parked(self) -> None:
-        self.parked.set()
+    def call_async(self, register: Callable[[], _Call]) -> "asyncio.Future[Any]":
+        """An async step method: register now, return the call's future on the workflow's loop."""
+        loop = self.wf_loop
+        if loop is None or threading.get_ident() != self.wf_thread:
+            raise RuntimeError("ctx.step calls are made from the workflow's own code, not from step functions")
+        try:
+            c = register()
+        except (ValueError, TypeError, InvocationEnded) as e:
+            fut: asyncio.Future[Any] = loop.create_future()
+            fut.set_exception(e)
+            fut.add_done_callback(_retrieve)
+            return fut
+        assert c.future is not None
+        return c.future
 
-    def sync_resumed(self) -> None:
-        if not self.thread_done:
-            self.parked.clear()
-
-    # ---- settling ----
+    def call_sync(self, registers: list[Callable[[], _Call]]) -> list[Any]:
+        """Sync step methods: register every call, then block until all have outcomes or one
+        failed (the first failure, in settling order, is raised)."""
+        if self.wf_loop is not None or threading.get_ident() != self.sync_thread:
+            raise RuntimeError("ctx.step calls are made from the workflow's own code, not from step functions")
+        calls = [r() for r in registers]
+        with self.lock:
+            self.sync_waiting = calls
+            self._notify()
+            while not self._sync_ready(calls):
+                self.lock.wait()
+            self.sync_waiting = None
+        failed = sorted((c for c in calls if c.outcome is not None and not c.outcome[0]), key=lambda c: c.settled_n)
+        if failed:
+            raise failed[0].outcome[1]  # type: ignore[index]
+        return [c.outcome[1] for c in calls if c.outcome is not None]
 
     @staticmethod
-    def _resolve(c: _Call, value: Any) -> None:
-        if not c.future.done():
-            c.future.set_result(value)
+    def _sync_ready(calls: list[_Call]) -> bool:
+        return all(c.settled for c in calls) or any(c.outcome is not None and not c.outcome[0] for c in calls)
 
-    @staticmethod
-    def _reject(c: _Call, e: BaseException) -> None:
-        if not c.future.done():
-            c.future.set_exception(e)
+    # ---- settling (the driver) ----
+
+    def _settle(self, c: _Call, ok: bool, value: Any) -> None:
+        with self.lock:
+            if c.outcome is not None:
+                return
+            self.settled_count += 1
+            c.outcome, c.settled_n = (ok, value), self.settled_count
+            self.lock.notify_all()
+        if c.future is not None and self.wf_loop is not None:
+            with contextlib.suppress(RuntimeError):  # the workflow's loop is gone
+                self.wf_loop.call_soon_threadsafe(_apply, c.future, ok, value)
+
+    def _resolve(self, c: _Call, value: Any) -> None:
+        self._settle(c, True, value)
+
+    def _reject(self, c: _Call, e: BaseException) -> None:
+        self._settle(c, False, e)
 
     def _handle(self, c: _Call, token: str) -> Callback | SyncCallback:
         url = f"{self.api_base}/public/v1/callbacks/{token}"
         if c.sync_handle:
-            sync_step = self._sync_step
-            assert sync_step is not None
-            return SyncCallback(url, token, lambda: sync_step._block(lambda: self._wait_call(c)))
-        return Callback(url, token, lambda: self._wait_call(c))
+            return SyncCallback(url, token, lambda: self.call_sync([lambda: self.register_wait(c)])[0])
+        return Callback(url, token, lambda: self.call_async(lambda: self.register_wait(c)))
+
+    @staticmethod
+    def _order_seq(c: _Call, e: JournalEntry) -> int:
+        """Where a recorded outcome replays: its seq; a callback's creation at createdSeq when the
+        journal carries it (the entry's seq is its completion's)."""
+        if c.kind == "callback":
+            created = cast(dict[str, Any], e).get("createdSeq")
+            if isinstance(created, int) and not isinstance(created, bool):
+                return created
+        return int(e["seq"])
 
     def _recorded_entry(self, c: _Call) -> JournalEntry | None:
         """The journal entry that settles c: a callback's creation once its token is journaled
@@ -472,11 +529,12 @@ class Execution:
                     raise
                 raise _StepCancelled() from None
             try:
-                value = encode_value(raw)
+                encoded = encode_value(raw)
             except (TypeError, RecursionError) as e:
                 raise NonRetriableError(str(e)) from e
-            if json_byte_length(value) > MAX_OUTPUT_BYTES:
+            if json_byte_length(encoded) > MAX_OUTPUT_BYTES:
                 raise OutputTooLargeError(f'Step "{c.name}" returned more than 1 MiB of JSON')
+            value = _json_copy(encoded)  # the live value is the replayed one
             self.executed += 1
             self._resolve(c, value)
             self.outbox.append({"type": "stepCompleted", "stepId": c.step_id, "name": c.name, "output": value})
@@ -536,104 +594,188 @@ class Execution:
             sched = ScheduleMeta(s["id"], datetime.fromtimestamp(parse_time(s["scheduledTime"]), UTC), s)
         return RunMeta(r["id"], r.get("runKey"), r["attempt"], sched)
 
-    def _finish(self, ok: bool, value: Any) -> None:
-        if not self.closed and self.finished is None:
-            self.finished = (ok, value)
+    def _ended(self, kind: str, value: Any) -> None:
+        """On the driver's loop: the workflow returned, raised, crashed or went away."""
+        if not self.closed:
+            if kind == "ok" and self.finished is None:
+                self.finished = (True, value)
+            elif kind == "error" and self.finished is None:
+                self.finished = (False, value)
+            elif kind == "crash":
+                self.crashed = value
+            elif kind == "gone":
+                self.gone = True
         self.activity.set()
 
+    @staticmethod
+    def _not_awaitable(r: Any) -> Any:
+        if inspect.isawaitable(r):
+            if inspect.iscoroutine(r):
+                r.close()
+            raise TypeError(
+                "A plain def workflow returned an awaitable: declare it async def (or make it return a value)"
+            )
+        return r
+
     async def _run_async(self) -> None:
+        """The workflow, on its own loop."""
         try:
-            result = await self.d.fn(Context(self.inv["run"].get("input"), self._meta(), Step(self)))
+            r = self.d.fn(Context(self.inv["run"].get("input"), self._meta(), Step(self)))
+            result = await r if inspect.isawaitable(r) else r
         except InvocationEnded:
-            return
+            self._post(self._ended, "gone", None)
         except asyncio.CancelledError as e:
             if _being_cancelled():
+                self._post(self._ended, "gone", None)
                 raise
-            self._finish(False, e)  # the workflow's own code raised it: a failure, as any other
+            self._post(self._ended, "error", e)  # the workflow's own code raised it: a failure
         except Exception as e:
-            self._finish(False, e)
+            self._post(self._ended, "error", e)
+        except BaseException as e:
+            self._post(self._ended, "crash", e)
+            raise
         else:
-            self._finish(True, result)
-        finally:
-            self.activity.set()
+            self._post(self._ended, "ok", result)
+
+    async def _wf_main(self) -> None:
+        assert self.wf_closed is not None
+        task = asyncio.ensure_future(self._run_async())
+        task.add_done_callback(lambda t: None if t.cancelled() else t.exception())
+        await self.wf_closed.wait()
+        # The invocation is over; pending calls got InvocationEnded. Let the workflow unwind.
+        current = asyncio.current_task()
+        rest = [t for t in asyncio.all_tasks() if t is not current]
+        if rest:
+            _, still = await asyncio.wait(rest, timeout=UNWIND_SECONDS)
+            for t in still:
+                t.cancel()
+            if still:
+                await asyncio.wait(still, timeout=UNWIND_SECONDS)
+
+    def _start_async(self) -> None:
+        started = threading.Event()
+
+        def main() -> None:
+            # A loop of the workflow's own: its ready queue says exactly when the workflow is idle.
+            loop = asyncio.SelectorEventLoop()
+            loop.set_exception_handler(_quiet_handler)
+            asyncio.set_event_loop(loop)
+            self.wf_loop, self.wf_thread = loop, threading.get_ident()
+            self.wf_closed = asyncio.Event()
+            started.set()
+            try:
+                loop.run_until_complete(self._wf_main())
+            except BaseException:
+                pass
+            finally:
+                with contextlib.suppress(Exception):
+                    loop.run_until_complete(loop.shutdown_asyncgens())
+                loop.close()
+
+        threading.Thread(target=main, name=f"ezgh-workflows-{self.d.name}", daemon=True).start()
+        started.wait()
 
     def _start_sync(self) -> None:
-        self._sync_step = SyncStep(self, self.loop)
+        self._sync_step = SyncStep(self)
         ctx = SyncContext(self.inv["run"].get("input"), self._meta(), self._sync_step)
-        fn, loop = self.d.fn, self.loop
+        fn = self.d.fn
 
         def target() -> None:
-            outcome: tuple[str, Any]
+            self.sync_thread = threading.get_ident()
+            kind: str
+            value: Any = None
             try:
-                outcome = ("ok", fn(ctx))
+                kind, value = "ok", self._not_awaitable(fn(ctx))
             except InvocationEnded:
-                outcome = ("ended", None)
+                kind = "gone"
             except Exception as e:
-                outcome = ("error", e)
+                kind, value = "error", e
             except BaseException as e:
-                outcome = ("crash", e)
-
-            def done() -> None:
+                kind, value = "crash", e
+            self._post(self._ended, kind, value)  # queued before the driver can see thread_done
+            with self.lock:
                 self.thread_done = True
-                if outcome[0] == "ok":
-                    self._finish(True, outcome[1])
-                elif outcome[0] == "error":
-                    self._finish(False, outcome[1])
-                elif outcome[0] == "crash" and not self.closed:
-                    self.crashed = outcome[1]
-                self.parked.set()
-                self.activity.set()
-
-            with contextlib.suppress(RuntimeError):
-                loop.call_soon_threadsafe(done)
+                self.lock.notify_all()
+            self._notify()
 
         threading.Thread(target=target, name=f"ezgh-workflows-{self.d.name}", daemon=True).start()
 
     def _workflow_over(self) -> bool:
-        if self.finished is not None or self.crashed is not None:
-            return True
-        return self.task is not None and self.task.done()
+        return self.finished is not None or self.crashed is not None or self.gone
 
-    async def _wait(self, ev: asyncio.Event) -> bool:
-        """ev.wait(), bounded by the invocation's time budget: False when the budget ran out while
-        the workflow was busy outside any step (the invocation then ends with what it has)."""
+    def _budget_left(self) -> float:
         total = self.deadline - self.started
-        left = self.deadline - self.now() - max(5.0, total * 0.1)
-        try:
-            await asyncio.wait_for(ev.wait(), max(0.0, left))
-        except TimeoutError:
-            return ev.is_set()
-        return True
+        return max(0.0, self.deadline - self.now() - max(5.0, total * 0.1))
+
+    async def _async_idle(self) -> None:
+        """Until the workflow's loop has no ready callbacks: every task waits on a future nothing
+        has resolved (or the workflow ended)."""
+        loop = self.wf_loop
+        assert loop is not None
+        answer: asyncio.Future[None] = self.loop.create_future()
+
+        def reply() -> None:
+            if not answer.done():
+                answer.set_result(None)
+
+        hops = [0]
+
+        def probe() -> None:
+            ready = getattr(loop, "_ready", None)
+            hops[0] += 1
+            idle = len(ready) == 0 if ready is not None else hops[0] > 64
+            if idle:
+                self._post(reply)
+            else:
+                loop.call_soon(probe)
+
+        with contextlib.suppress(RuntimeError):
+            loop.call_soon_threadsafe(probe)
+        await answer
+
+    def _sync_idle(self) -> bool:
+        with self.lock:
+            w = self.sync_waiting
+            return self.thread_done or (w is not None and not self._sync_ready(w))
 
     async def _quiesce(self) -> bool:
-        while True:
-            if not self.d.is_async and not await self._wait(self.parked):
+        """Until the workflow is idle; False when the time budget ran out first (code busy outside
+        any step), so the invocation ends with what it has."""
+        if self.d.is_async:
+            try:
+                await asyncio.wait_for(self._async_idle(), self._budget_left())
+            except TimeoutError:
                 return False
-            seen, spins = len(self.calls), 0
-            while spins < IDLE_SPINS:
-                await asyncio.sleep(0)
-                if self._workflow_over():
-                    return True
-                if len(self.calls) != seen:
-                    seen, spins = len(self.calls), 0
-                else:
-                    spins += 1
-            if self.d.is_async or self.parked.is_set():
+            # Anything the workflow posted before going idle has run on this loop by now.
+            await asyncio.sleep(0)
+            return True
+        while True:
+            self.activity.clear()
+            if self._sync_idle():
+                await asyncio.sleep(0)  # let the thread's posted notices run first
                 return True
+            try:
+                await asyncio.wait_for(self.activity.wait(), self._budget_left())
+            except TimeoutError:
+                return self._sync_idle()
 
     def _close(self) -> None:
         """The invocation is over: anything still waiting gets InvocationEnded, so the workflow
-        task (or thread) unwinds through its finally blocks instead of hanging."""
-        self.closed = True
-        for c in self.calls:
+        unwinds through its finally blocks instead of hanging; step calls made then raise it."""
+        with self.lock:
+            self.closed = True
+            unsettled = [c for c in self.calls if not c.settled]
+        for c in unsettled:
             self._reject(c, InvocationEnded())
+        if self.wf_loop is not None and self.wf_closed is not None:
+            with contextlib.suppress(RuntimeError):
+                self.wf_loop.call_soon_threadsafe(self.wf_closed.set)
 
     async def run(self) -> list[Command]:
         try:
             await self._load()
             if self.d.is_async:
-                self.task = asyncio.ensure_future(self._run_async())
-                self.task.add_done_callback(lambda t: None if t.cancelled() else t.exception())
+                self._start_async()
             else:
                 self._start_sync()
             return await self._drive()
@@ -645,31 +787,34 @@ class Execution:
         while True:
             if not await self._quiesce():
                 return self._end([])
+            step_inv = inv["kind"] == "step"
             if self.fatal is not None:
-                return self._end([{"type": "runFailed", "error": self.fatal}])
+                # A step invocation may only report its target step (the engine refuses the rest).
+                return self._end([] if step_inv else [{"type": "runFailed", "error": self.fatal}])
             if self.finished is not None:
-                return self._end(self._terminal())
+                return self._end([] if step_inv else self._terminal())
             if self.crashed is not None:
                 raise self.crashed
-            if self.task is not None and self.task.done():
-                # The workflow ended without a result: cancelled, or a BaseException. Report nothing.
-                if self.task.cancelled():
-                    raise asyncio.CancelledError()
-                exc = self.task.exception()
-                raise exc if exc is not None else asyncio.CancelledError()
-            pending = [c for c in self.calls if not c.settled]
+            if self.gone:
+                raise asyncio.CancelledError()  # the workflow was cancelled under us: report nothing
+            with self.lock:
+                pending = [c for c in self.calls if not c.settled]
             if not pending:
                 self.activity.clear()
-                if not await self._wait(self.activity):
+                try:
+                    await asyncio.wait_for(self.activity.wait(), self._budget_left())
+                except TimeoutError:
                     return self._end([])
                 continue
-            recorded = [(e["seq"], c.order, c, e) for c in pending if (e := self._recorded_entry(c)) is not None]
+            recorded = [
+                (self._order_seq(c, e), c.order, c, e) for c in pending if (e := self._recorded_entry(c)) is not None
+            ]
             if recorded:
                 _, _, rc, re_ = min(recorded, key=lambda r: (r[0], r[1]))
                 self._settle_recorded(rc, re_)
                 continue
             pending.sort(key=lambda c: c.order)
-            if inv["kind"] == "step":
+            if step_inv:
                 return await self._step_invocation(pending)
             c = pending[0]
             if inv["cancel"] and not self.cancel_thrown:
@@ -697,7 +842,7 @@ class Execution:
             if head is not None and head.kind == "callback":
                 await self._create_callback(head)
                 continue
-            nxt = self._plan(pending) if self.parallel and not self.cancel_thrown else self._sequential(c)
+            nxt = self._plan(pending) if parallel else self._sequential(c)
             if isinstance(nxt, list):
                 return self._end(nxt)
             if self.executed >= self.max_steps or not self._time_left_ok():

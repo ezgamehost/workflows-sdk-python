@@ -119,3 +119,21 @@ def test_rfc3339_nano_trims_like_go() -> None:
     assert rfc3339_nano("2026-10-10T02:00:00.120+02:00") == "2026-10-10T00:00:00.12Z"
     with pytest.raises(ValueError):
         rfc3339_nano(datetime(2026, 1, 1))
+
+
+def test_years_before_1000_are_zero_padded() -> None:
+    from ezgh_workflows.protocol._codec import iso_from_ms
+    from ezgh_workflows.protocol._ids import rfc3339_nano
+
+    assert encode_value(datetime(1, 1, 1, tzinfo=UTC)) == "0001-01-01T00:00:00.000Z"
+    assert encode_value(datetime(999, 12, 31, 23, 59, 59, 999999, tzinfo=UTC)) == "0999-12-31T23:59:59.999Z"
+    assert iso_from_ms(-62135596800000) == "0001-01-01T00:00:00.000Z"
+    assert rfc3339_nano(datetime(5, 1, 1, tzinfo=UTC)) == "0005-01-01T00:00:00Z"
+
+
+def test_the_version_has_one_source() -> None:
+    import importlib.metadata
+
+    from ezgh_workflows import __version__
+
+    assert importlib.metadata.version("ezgh-workflows") == __version__

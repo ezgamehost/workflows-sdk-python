@@ -1,6 +1,6 @@
 [project]
 name = "ezgh-workflows"
-version = "0.1.0"
+dynamic = ["version"]
 description = "Durable workflows as code for EZGH Cloud: steps, sleeps, retries, callbacks, child workflows and schedules."
 readme = "README.md"
 license = "Apache-2.0"
@@ -30,6 +30,11 @@ dev = [
 [build-system]
 requires = ["hatchling==1.27.0"]
 build-backend = "hatchling.build"
+
+[tool.hatch.version]
+# The version lives in one place, src/ezgh_workflows/_version.py (SDK_VERSION, sent on the wire).
+path = "src/ezgh_workflows/_version.py"
+pattern = "SDK_VERSION = \"(?P<version>[^\"]+)\""
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/ezgh_workflows"]

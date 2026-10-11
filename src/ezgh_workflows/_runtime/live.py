@@ -6,7 +6,7 @@ import json
 import time
 import urllib.parse
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from email.utils import parsedate_to_datetime
 from typing import Any, Literal, Protocol
 
@@ -75,7 +75,7 @@ class HttpLive:
     seconds would remain before the deadline; any other error answer fails the invocation."""
 
     base: str
-    token: str
+    token: str = field(repr=False)  # a credential: never in repr()
     deadline: float | None = None  # epoch seconds on this machine's clock
     reserve: float = 0.0
     now: Callable[[], float] = time.time

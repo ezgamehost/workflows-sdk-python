@@ -239,6 +239,22 @@ async def longstep(ctx: Context) -> Any:
     return await ctx.step.run("long", long)
 
 
+@workflow("branches")
+async def branches(ctx: Context) -> Any:
+    async def first() -> Any:
+        cb = await ctx.step.create_callback("approval", timeout=60_000)
+        log = await ctx.step.run("log", lambda: "A")
+        await cb.wait()
+        return log
+
+    async def second() -> Any:
+        await ctx.step.run("prep", lambda: "P")
+        return await ctx.step.run("log", lambda: "B")
+
+    a, b = await asyncio.gather(first(), second())
+    return {"a": a, "b": b}
+
+
 WORKFLOWS = [
     sequence,
     echo,
@@ -268,6 +284,7 @@ WORKFLOWS = [
     scheduled,
     pulled,
     longstep,
+    branches,
 ]
 
 app = serve(

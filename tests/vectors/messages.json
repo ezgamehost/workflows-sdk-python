@@ -139,6 +139,72 @@
         "targetStepId": "314ad9948a19a4844e0ea75b7de59ecd",
         "deadline": "2026-10-09T12:05:00Z",
         "cancel": null
+      },
+      {
+        "protocolVersion": "1.1",
+        "kind": "step",
+        "invocationId": "inv_aaaqeayeaudaocajbifqydiob4",
+        "token": "3ff.01a12088-d200-73ff-8899-aabbccddeeff.inv_aaaqeayeaudaocajbifqydiob4.AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyA",
+        "endpoints": {
+          "live": "https://workflows-live.ezghcloud.com",
+          "api": "https://workflows.ezghcloud.com"
+        },
+        "run": {
+          "id": "01a12088-d200-73ff-8899-aabbccddeeff",
+          "workflow": "onboarding",
+          "input": {
+            "userId": "u_1"
+          },
+          "attempt": 1,
+          "startedAt": "2026-10-09T12:00:00Z",
+          "schedule": {
+            "id": "01a12088-d200-7201-8899-aabbccddeeff",
+            "scheduledTime": "2026-10-10T00:00:00Z"
+          }
+        },
+        "journal": {
+          "complete": true,
+          "entries": [
+            {
+              "seq": 1,
+              "stepId": "314ad9948a19a4844e0ea75b7de59ecd",
+              "name": "load-user",
+              "kind": "run",
+              "status": "retrying",
+              "attempt": 1,
+              "error": {
+                "code": "user",
+                "name": "HttpError",
+                "message": "502"
+              }
+            },
+            {
+              "seq": 3,
+              "stepId": "647183279cc9bde6ec2db6426fadd2e6",
+              "name": "log",
+              "kind": "run",
+              "status": "completed",
+              "attempt": 1,
+              "output": "A"
+            },
+            {
+              "seq": 4,
+              "stepId": "6b460c8e80c757cd5cef81a0acbd2700",
+              "name": "approval",
+              "kind": "callback",
+              "status": "completed",
+              "attempt": 1,
+              "token": "201.AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8",
+              "createdSeq": 2,
+              "output": {
+                "approved": true
+              }
+            }
+          ]
+        },
+        "targetStepId": "314ad9948a19a4844e0ea75b7de59ecd",
+        "deadline": "2026-10-09T12:05:00Z",
+        "cancel": null
       }
     ],
     "invalid": [
@@ -186,6 +252,72 @@
           "complete": true,
           "entries": []
         },
+        "deadline": "2026-10-09T12:05:00Z",
+        "cancel": null
+      },
+      {
+        "protocolVersion": "1.1",
+        "kind": "step",
+        "invocationId": "inv_aaaqeayeaudaocajbifqydiob4",
+        "token": "3ff.01a12088-d200-73ff-8899-aabbccddeeff.inv_aaaqeayeaudaocajbifqydiob4.AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyA",
+        "endpoints": {
+          "live": "https://workflows-live.ezghcloud.com",
+          "api": "https://workflows.ezghcloud.com"
+        },
+        "run": {
+          "id": "01a12088-d200-73ff-8899-aabbccddeeff",
+          "workflow": "onboarding",
+          "input": {
+            "userId": "u_1"
+          },
+          "attempt": 1,
+          "startedAt": "2026-10-09T12:00:00Z",
+          "schedule": {
+            "id": "01a12088-d200-7201-8899-aabbccddeeff",
+            "scheduledTime": "2026-10-10T00:00:00Z"
+          }
+        },
+        "journal": {
+          "complete": true,
+          "entries": [
+            {
+              "seq": 1,
+              "stepId": "314ad9948a19a4844e0ea75b7de59ecd",
+              "name": "load-user",
+              "kind": "run",
+              "status": "retrying",
+              "attempt": 1,
+              "error": {
+                "code": "user",
+                "name": "HttpError",
+                "message": "502"
+              }
+            },
+            {
+              "seq": 3,
+              "stepId": "647183279cc9bde6ec2db6426fadd2e6",
+              "name": "log",
+              "kind": "run",
+              "status": "completed",
+              "attempt": 1,
+              "output": "A"
+            },
+            {
+              "seq": 4,
+              "stepId": "6b460c8e80c757cd5cef81a0acbd2700",
+              "name": "approval",
+              "kind": "callback",
+              "status": "completed",
+              "attempt": 1,
+              "token": "201.AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8",
+              "createdSeq": 0,
+              "output": {
+                "approved": true
+              }
+            }
+          ]
+        },
+        "targetStepId": "314ad9948a19a4844e0ea75b7de59ecd",
         "deadline": "2026-10-09T12:05:00Z",
         "cancel": null
       }

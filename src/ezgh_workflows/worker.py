@@ -11,6 +11,7 @@ import functools
 import getpass
 import json
 import logging
+import os
 import random
 import re
 import signal
@@ -25,7 +26,7 @@ from typing import Any
 
 from ._env import clean_deployment, detect_deployment
 from ._http import AbortableRequest, HttpError, Response, request
-from ._runtime.execution import execute
+from ._runtime.execution import MAX_PULL_RESULT_BYTES, execute
 from ._runtime.invocation import InvalidInvocation, parse_invocation, parse_time
 from ._runtime.live import CheckpointFailed, HttpLive, InvocationSuperseded, retry_after_seconds
 from ._runtime.threads import run_in_thread
@@ -47,14 +48,15 @@ log = logging.getLogger("ezgh_workflows")
 
 
 def dev_name(user: str | None = None) -> str:
-    """dev-<user>: the user (default getpass.getuser()) lowercased, every character outside
-    [a-z0-9-] replaced by "-", cut to 40 characters; a valid queue and app name."""
-    try:
-        raw = user if user is not None else getpass.getuser()
-    except Exception:
-        raw = ""
-    u = re.sub(r"[^a-z0-9-]", "-", raw.lower()).strip("-")[:40].strip("-")
-    return f"dev-{u or 'user'}"
+    """dev-<user>, the same in every SDK: the user (else $USER, $USERNAME, $LOGNAME, the OS user)
+    lowercased, each run of characters outside [a-z0-9] replaced by one "-", cut to 58 characters,
+    trimmed of "-"; dev-dev when nothing is left. A valid queue and app name."""
+    raw = user or os.environ.get("USER") or os.environ.get("USERNAME") or os.environ.get("LOGNAME") or ""
+    if not raw:
+        with contextlib.suppress(Exception):
+            raw = getpass.getuser()
+    clean = re.sub(r"[^a-z0-9]+", "-", raw.lower())[:58].strip("-")
+    return f"dev-{clean or 'dev'}"
 
 
 def _default_worker_id() -> str:
@@ -177,9 +179,10 @@ class Worker:
         try:
             app_id = c.create_app(name, kind="pull", queue=name)["app"]["id"]
         except WorkflowsApiError as e:
-            if e.status != 409:
+            # It exists (409 app_exists), or the create's outcome is unknown: find it by name.
+            if not ((e.status == 409 and e.code == "app_exists") or e.code == "outcome_unknown"):
                 raise
-            app_id = _find_app(c, name)
+            app_id = _find_app(c, name, name)
         return cls(
             api_key=api_key,
             organization_id=organization_id,
@@ -265,7 +268,7 @@ class Worker:
 
     async def _poll_loop(self) -> None:
         assert self._stopping is not None
-        delay, unauthorized = 0.5, 0
+        delay = 0.5
         while not self._stopping.is_set():
             free = self._concurrency - len(self._inflight)
             if free <= 0:
@@ -305,13 +308,7 @@ class Worker:
                 delay = min(self._backoff_max, delay * 2)
                 continue
             if res.status in (401, 403):
-                # One retry for 401: the key may be rotating.
-                unauthorized += 1
-                if res.status == 403 or unauthorized > 1:
-                    raise _unauthorized(res.status)
-                await self._backoff(min(1.0, self._backoff_max), None)
-                continue
-            unauthorized = 0
+                raise _unauthorized(res.status)  # the key or its permissions: fatal, as in every SDK
             if res.status == 429 or res.status >= 500:
                 self._error(WorkflowsApiError(res.status, "unavailable", f"HTTP {res.status}"), "poll")
                 await self._backoff(delay, retry_after_seconds(res))
@@ -410,6 +407,7 @@ class Worker:
                 cancel_event=cancel,
                 max_steps=self._max_steps,
                 api_base_url=self._api_base,
+                max_result_bytes=MAX_PULL_RESULT_BYTES,
             )
         )
         beat = asyncio.ensure_future(self._heartbeat(live, inv["token"], deadline, cancel, work, superseded))
@@ -498,15 +496,17 @@ def _skew(res: Response, received: float) -> float:
         return 0.0
 
 
-def _find_app(c: Client, name: str) -> str:
+def _find_app(c: Client, name: str, queue: str) -> str:
     cursor: str | None = None
     while True:
         page = c.list_apps(cursor=cursor, limit=100)
         for a in page.get("apps", []):
-            if a.get("name") == name and a.get("kind") == "pull":
+            if a.get("name") == name:
+                if a.get("kind") != "pull" or a.get("queue") != queue:
+                    raise WorkflowsApiError(
+                        409, "app_exists", f'The app "{name}" exists but isn\'t a pull app with the queue {queue}'
+                    )
                 return a["id"]
         cursor = page.get("nextCursor")
         if not cursor:
-            raise WorkflowsApiError(
-                409, "app_exists", f'An app named "{name}" exists but isn\'t a pull app this key can see'
-            )
+            raise WorkflowsApiError(404, "not_found", f'The dev app "{name}" was neither created nor found')

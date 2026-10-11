@@ -76,6 +76,10 @@ MAX_SLEEP_MS = 31_536_000_000  # a year: a run times out after a year at most
 MIN_CALLBACK_TIMEOUT_MS = 1_000
 MAX_RETRY_AFTER_MS = 86_400_000
 MAX_PLANNED_STEPS = 1000  # validate.go MaxPlannedSteps
+# What the transport takes back: a pull complete's body (the live host's 8 MiB), a push response
+# (dispatch reads up to 16 MiB).
+MAX_PULL_RESULT_BYTES = 8 << 20
+MAX_PUSH_RESULT_BYTES = 16 << 20
 DEFAULT_API_BASE = "https://workflows-api.ezghcloud.com"
 RECORDED = frozenset({"completed", "failed", "cancelled"})
 _CAUSE_STEP = "_ezgh_workflows_step_id"
@@ -127,6 +131,16 @@ def _supports_parallel(version: str) -> bool:
         return major == "1"
 
 
+def _cause_chain(e: BaseException) -> list[BaseException]:
+    """e and its causes (__cause__), at most 64 deep."""
+    out: list[BaseException] = []
+    cur: BaseException | None = e
+    while cur is not None and len(out) < 64 and cur not in out:
+        out.append(cur)
+        cur = cur.__cause__
+    return out
+
+
 def _json_copy(v: Any) -> Any:
     """v (already encoded) through the wire and back: live values equal replayed ones, so a
     StrEnum or numpy float comes back as the plain str or float a replay gives."""
@@ -176,7 +190,9 @@ class Execution:
         deadline: float,
         cancel_event: threading.Event | None,
         api_base_url: str | None,
+        max_result_bytes: int = 8 << 20,
     ) -> None:
+        self.max_result_bytes = max_result_bytes
         self.inv, self.io, self.now, self.max_steps, self.deadline = inv, io, now, max_steps, deadline
         self.d = definition_of(wf)
         self.cancel_event = cancel_event
@@ -561,17 +577,22 @@ class Execution:
 
     @staticmethod
     def _step_failed(c: _Call, attempt: int, e: BaseException) -> Command:
-        retryable = not isinstance(e, NonRetriableError | OutputTooLargeError)
+        chain = _cause_chain(e)
+        wire = encode_error(e)
+        retryable = not any(isinstance(x, NonRetriableError | OutputTooLargeError) for x in chain) and wire[
+            "code"
+        ] not in ("workflows.non_retriable", "workflows.output_too_large")
         cmd: Command = {
             "type": "stepFailed",
             "stepId": c.step_id,
             "name": c.name,
             "attempt": attempt,
-            "error": encode_error(e),
+            "error": wire,
             "retryable": retryable,
         }
-        if isinstance(e, RetryAfterError):
-            d = e.delay_ms
+        ra = next((x for x in chain if isinstance(x, RetryAfterError)), None)
+        if ra is not None:
+            d = ra.delay_ms
             if isinstance(d, int | float) and not isinstance(d, bool) and d == d:
                 cmd["retryAfterMs"] = int(min(MAX_RETRY_AFTER_MS, max(0.0, d)))  # clamps infinities too
         return cmd
@@ -826,19 +847,35 @@ class Execution:
             pending.sort(key=lambda c: c.order)
             if step_inv:
                 return await self._step_invocation(pending)
-            c = pending[0]
             if inv["cancel"] and not self.cancel_thrown:
                 self.cancel_thrown = True
-                self._reject(c, RunCancelledError("The run was cancelled"))
+                self._reject(pending[0], RunCancelledError("The run was cancelled"))
                 continue
-            if self.cancel_thrown and c.kind != "run":
-                self._reject(c, RunCancelledError("The run is cancelling: only step.run cleanup steps can run"))
-                continue
+            if self.cancel_thrown:
+                # Only step.run cleanup steps proceed: the first other call is refused, wherever it is.
+                refused = next((p for p in pending if p.kind != "run"), None)
+                if refused is not None:
+                    self._reject(
+                        refused, RunCancelledError("The run is cancelling: only step.run cleanup steps can run")
+                    )
+                    continue
+                # A cleanup step doesn't wait behind steps the engine owns (an in-flight sibling):
+                # the next call is the oldest one the engine doesn't own.
+                not_owned = (
+                    p for p in pending if (e := self.journal.get(p.step_id)) is None or e.get("status") == "retrying"
+                )
+                first = next(not_owned, None)
+                if first is None:
+                    return self._end([])
+                c = first
+            else:
+                c = pending[0]
             # The deciding call: at 1.1 the oldest call with no journal entry (D2-19; calls the
-            # engine owns don't hold values back), at 1.0 the oldest pending call, as in phase 1.
+            # engine owns don't hold values back), at 1.0 and while cancelling the oldest pending
+            # call (phase 1).
             parallel = self.parallel and not self.cancel_thrown
             head = next((p for p in pending if p.step_id not in self.journal), None) if parallel else c
-            if head is not None and head.kind == "value":
+            if head is not None and head.kind == "value" and head.step_id not in self.journal:
                 if head.produce == "now":
                     recorded_value: str = iso_from_ms(math.floor(self.now() * 1000))
                     live: Any = datetime.fromtimestamp(parse_time(recorded_value), UTC)
@@ -849,17 +886,41 @@ class Execution:
                 )
                 self._resolve(head, live)
                 continue
-            if head is not None and head.kind == "callback":
+            if head is not None and head.kind == "callback" and head.step_id not in self.journal:
                 await self._create_callback(head)
                 continue
             nxt = self._plan(pending) if parallel else self._sequential(c)
             if isinstance(nxt, list):
-                return self._end(nxt)
-            if self.executed >= self.max_steps or not self._time_left_ok():
+                return self._finish_result(nxt)
+            if self.executed >= self.max_steps or not self._time_left_ok() or self._heartbeat_cancelled():
+                # The budget, the deadline, or a pull heartbeat that reported a cancel: no new step
+                # starts here; the next invocation carries on (with the cancel).
                 return self._end([])
             failed = await self._run_step(nxt.call, nxt.attempt)
             if failed is not None:
                 return self._end([failed])
+
+    def _heartbeat_cancelled(self) -> bool:
+        return self.cancel_event is not None and self.cancel_event.is_set()
+
+    def _finish_result(self, commands: list[Command]) -> list[Command]:
+        """What the engine and the transport accept: a plan of more than 1,000 steps, or a result
+        past the body cap, fails the run non-retriably instead of being rebuilt on every redispatch."""
+        for cmd in commands:
+            if cmd["type"] == "planParallel" and len(cmd["steps"]) > MAX_PLANNED_STEPS:
+                err = NonRetriableError(
+                    f"{len(cmd['steps'])} steps started at once; a run plans at most {MAX_PLANNED_STEPS} together "
+                    "(start them in batches, or fan out through child workflows)"
+                )
+                return self._end([{"type": "runFailed", "error": encode_error(err)}])
+        size = sum(len(dumps_bytes(c)) + 1 for c in [*self.outbox, *commands])
+        if size + 1024 > self.max_result_bytes:
+            err = NonRetriableError(
+                f"The invocation's commands are {size} bytes of JSON, more than the {self.max_result_bytes} the "
+                "transport takes (child inputs and outputs are at most 1 MiB each; fewer at once fit)"
+            )
+            return self._end([{"type": "runFailed", "error": encode_error(err)}])
+        return self._end(commands)
 
     async def _create_callback(self, c: _Call) -> None:
         """Mints the token (the run's shard), records it in an acknowledged checkpoint, and only
@@ -942,7 +1003,7 @@ class Execution:
             return _Inline(c, int(e.get("attempt", 0)) + 1 if e is not None and e.get("status") == "retrying" else 1)
         commands: list[Command] = []
         if runs:
-            commands.append({"type": "planParallel", "steps": [self._planned(r) for r in runs[:MAX_PLANNED_STEPS]]})
+            commands.append({"type": "planParallel", "steps": [self._planned(r) for r in runs]})
         return [*commands, *suspends]
 
     def _sequential(self, c: _Call) -> "_Inline | list[Command]":
@@ -979,13 +1040,15 @@ async def execute(
     deadline: float | None = None,
     cancel_event: threading.Event | None = None,
     api_base_url: str | None = None,
+    max_result_bytes: int = MAX_PULL_RESULT_BYTES,
 ) -> list[Command]:
     """Runs one invocation of wf and returns its InvocationResult commands. Raises
     InvocationSuperseded or CheckpointFailed when a checkpoint isn't applied.
 
     deadline: the invocation's deadline on this machine's clock (epoch seconds); default the
     invocation's own. cancel_event: set while the run is cancelling (pull heartbeats), visible to
-    steps through ctx.step.cancelled()."""
+    steps through ctx.step.cancelled(); no new step starts once it's set. max_result_bytes: what the
+    transport takes back (a result past it fails the run)."""
     if not isinstance(max_steps, int) or max_steps < 1:
         raise ValueError("max_steps is a whole number >= 1")
     ex = Execution(
@@ -997,5 +1060,6 @@ async def execute(
         deadline if deadline is not None else parse_time(inv["deadline"]),
         cancel_event,
         api_base_url,
+        max_result_bytes,
     )
     return await ex.run()

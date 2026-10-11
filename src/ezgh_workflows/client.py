@@ -173,6 +173,70 @@ def _retry_after(v: str | None) -> float | None:
     return n if math.isfinite(n) and n > 0 else None
 
 
+def _api_error(status: int, payload: Any, retry_after: str | None) -> WorkflowsApiError:
+    err = payload.get("error") if isinstance(payload, dict) else None
+    err = err if isinstance(err, dict) else {}
+    return WorkflowsApiError(
+        status, str(err.get("code", "unknown")), str(err.get("message", f"HTTP {status}")), _retry_after(retry_after)
+    )
+
+
+def _limit(limit: int | None) -> int | None:
+    if limit is not None and (not isinstance(limit, int) or isinstance(limit, bool) or limit < 1):
+        raise ValueError("limit is a whole number >= 1")
+    return limit
+
+
+def _with_secret(out: Any, what: str, kind: str | None = None) -> Any:
+    """A push app's secret comes back once: an answer without it (an Idempotency-Key replay) isn't
+    success, because the caller would never see the secret. Pull apps have none."""
+    app = out.get("app") if isinstance(out, dict) else None
+    kind = kind or (app.get("kind") if isinstance(app, dict) else None)
+    if isinstance(out, dict) and out.get("signingSecret") is None and kind != "pull":
+        raise WorkflowsApiError(
+            0,
+            "outcome_unknown",
+            f"The {what} answered without the signing secret (it's returned once; this was a replay). Check with "
+            "get_app, and rotate the app's secret if you didn't receive it.",
+        )
+    return out
+
+
+def complete_callback_url(url: str, value: Any, *, timeout: float = 60.0, retries: int = 3) -> None:
+    """Completes a callback by its URL (Callback.url) with value (any JSON, at most 1 MiB). The token
+    in the URL is the only credential: no API key is sent. A repeat with the same value succeeds;
+    another value is WorkflowsApiError 409 callback_completed, an expired callback 410
+    callback_expired, an unknown token 404. Errors never include the URL."""
+    if not isinstance(url, str) or not url.startswith(("https://", "http://")):
+        raise ValueError("A callback URL is an http(s) URL, as Callback.url gives it")
+    data = dumps_bytes(encode_value(value))
+    headers = {"Content-Type": "application/json", "Accept": "application/json"}
+    attempt = 0
+    while True:
+        try:
+            res = request("POST", url, headers, data, timeout)
+        except HttpError as e:
+            # Completing is idempotent (the same value answers 200 again): resending is safe.
+            if attempt >= retries:
+                raise WorkflowsApiError(
+                    0, "network_error", f"Completing the callback failed in transit ({e.reason})"
+                ) from None
+            _sleep(0.5 * 2**attempt)
+            attempt += 1
+            continue
+        if 200 <= res.status < 300:
+            return
+        try:
+            payload = json.loads(res.body) if res.body else None
+        except (ValueError, UnicodeDecodeError):
+            payload = None
+        err = _api_error(res.status, payload, res.headers.get("retry-after"))
+        if res.status not in (429, 503) or attempt >= retries:
+            raise err
+        _sleep(min(10.0, err.retry_after_seconds or 1.0))
+        attempt += 1
+
+
 class Client:
     """Calls the Workflows API for one project (blocking). Run calls take an API key or a
     workflows:runs SSO token; app and schedule management need an API key with those actions.
@@ -246,14 +310,24 @@ class Client:
                 payload = None
             if 200 <= res.status < 300:
                 return payload
-            err = payload.get("error") if isinstance(payload, dict) else None
-            err = err if isinstance(err, dict) else {}
-            ra = _retry_after(res.headers.get("retry-after"))
-            api_err = WorkflowsApiError(
-                res.status, str(err.get("code", "unknown")), str(err.get("message", f"HTTP {res.status}")), ra
-            )
-            if res.status not in (429, 503) or attempt >= self._retries:
+            api_err = _api_error(res.status, payload, res.headers.get("retry-after"))
+            if not resend and res.status >= 500:
+                # The server may have done it before failing: a resend would replay it without the
+                # secret, so the outcome is unknown.
+                raise WorkflowsApiError(
+                    res.status,
+                    "outcome_unknown",
+                    f"The API answered {res.status} ({api_err.code}), so the request may have taken effect; a "
+                    "resend would return no secret. Check with get_app, and rotate the app's secret if you "
+                    "didn't receive it.",
+                    api_err.retry_after_seconds,
+                )
+            # 429 and 503 took no effect; a 409 idempotency_in_progress means the first request with
+            # this Idempotency-Key is still running: all are retried with the same key.
+            retry = res.status in (429, 503) or (res.status == 409 and api_err.code == "idempotency_in_progress")
+            if not retry or attempt >= self._retries:
                 raise api_err
+            ra = api_err.retry_after_seconds
             _sleep(min(self._max_delay, ra if ra is not None else 1.0))
             attempt += 1
 
@@ -275,7 +349,9 @@ class Client:
         for k, v in (("endpoint", endpoint), ("queue", queue), ("partitions", partitions)):
             if v is not None:
                 body[k] = v
-        out: AppWithSecret = self._call("POST", "/apps", body, idempotency_key, resend=False)
+        out: AppWithSecret = _with_secret(
+            self._call("POST", "/apps", body, idempotency_key, resend=False), "create", kind
+        )
         return out
 
     def get_app(self, app_id: str) -> App:
@@ -283,7 +359,7 @@ class Client:
         return out
 
     def list_apps(self, *, cursor: str | None = None, limit: int | None = None) -> AppList:
-        out: AppList = self._call("GET", "/apps" + _query(cursor=cursor, limit=limit))
+        out: AppList = self._call("GET", "/apps" + _query(cursor=cursor, limit=_limit(limit)))
         return out
 
     def sync(self, app_id: str, *, endpoint: str | None = None, deployment: str | None = None) -> App:
@@ -295,7 +371,9 @@ class Client:
 
     def rotate_secret(self, app_id: str) -> AppWithSecret:
         """A new signing secret; the old ones stay valid for 24 hours. Not resent after a network error."""
-        out: AppWithSecret = self._call("POST", f"/apps/{_q(app_id)}/rotate-secret", {}, resend=False)
+        out: AppWithSecret = _with_secret(
+            self._call("POST", f"/apps/{_q(app_id)}/rotate-secret", {}, resend=False), "rotation"
+        )
         return out
 
     # ---- runs ----
@@ -345,7 +423,7 @@ class Client:
         return self._call("GET", f"/runs/{_q(run_id)}/steps/{_q(step_id)}/output")
 
     def events(self, run_id: str, *, cursor: str | None = None, limit: int | None = None) -> RunEvents:
-        out: RunEvents = self._call("GET", f"/runs/{_q(run_id)}/events" + _query(cursor=cursor, limit=limit))
+        out: RunEvents = self._call("GET", f"/runs/{_q(run_id)}/events" + _query(cursor=cursor, limit=_limit(limit)))
         return out
 
     def complete_callback(self, run_id: str, step_id: str, value: Any) -> Run:
@@ -353,6 +431,10 @@ class Client:
         value itself. 409 callback_completed for a different value, 410 callback_expired."""
         out: Run = self._call("POST", f"/runs/{_q(run_id)}/callbacks/{_q(step_id)}", encode_value(value))
         return out
+
+    def complete_callback_url(self, url: str, value: Any) -> None:
+        """complete_callback_url(url, value): by the callback's URL, with no API key."""
+        complete_callback_url(url, value)
 
     # ---- schedules ----
 
@@ -394,7 +476,7 @@ class Client:
         return out
 
     def list_schedules(self, *, cursor: str | None = None, limit: int | None = None) -> ScheduleList:
-        out: ScheduleList = self._call("GET", "/schedules" + _query(cursor=cursor, limit=limit))
+        out: ScheduleList = self._call("GET", "/schedules" + _query(cursor=cursor, limit=_limit(limit)))
         return out
 
     def update_schedule(self, schedule_id: str, *, revision: int | None = None, **fields: Any) -> Schedule:
@@ -528,6 +610,9 @@ class AsyncClient:
 
     async def complete_callback(self, run_id: str, step_id: str, value: Any) -> Run:
         return await asyncio.to_thread(self._c.complete_callback, run_id, step_id, value)
+
+    async def complete_callback_url(self, url: str, value: Any) -> None:
+        await asyncio.to_thread(complete_callback_url, url, value)
 
     async def create_schedule(
         self,

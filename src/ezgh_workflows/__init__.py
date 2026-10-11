@@ -12,7 +12,7 @@ from ._runtime.errors import (
 )
 from ._runtime.workflow import Workflow, workflow
 from ._version import SDK_VERSION as __version__
-from .client import AsyncClient, Client, WorkflowsApiError
+from .client import AsyncClient, Client, WorkflowsApiError, complete_callback_url
 from .protocol import PROTOCOL_VERSIONS
 from .serve import serve
 from .worker import Worker
@@ -38,6 +38,7 @@ __all__ = [
     "WorkflowError",
     "WorkflowsApiError",
     "__version__",
+    "complete_callback_url",
     "serve",
     "workflow",
 ]

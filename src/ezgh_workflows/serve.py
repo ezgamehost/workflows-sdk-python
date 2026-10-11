@@ -10,7 +10,7 @@ from collections.abc import Awaitable, Callable, MutableMapping
 from typing import Any
 
 from ._env import clean_deployment, detect_deployment
-from ._runtime.execution import execute
+from ._runtime.execution import MAX_PUSH_RESULT_BYTES, execute
 from ._runtime.invocation import InvalidInvocation, parse_invocation, parse_time
 from ._runtime.live import CheckpointFailed, HttpLive, InvocationSuperseded
 from ._runtime.workflow import Workflow, definition_of, workflow_info
@@ -116,6 +116,13 @@ def serve(
         raise ValueError("max_invocation_seconds is a whole number from 1 to 900")
     if not isinstance(max_steps_per_invocation, int) or max_steps_per_invocation < 1:
         raise ValueError("max_steps_per_invocation is a whole number >= 1")
+    for wf in by_name.values():
+        d = definition_of(wf)
+        if d.timeout_ms and d.timeout_ms > max_invocation_seconds * 1000:
+            raise ValueError(
+                f'Workflow "{d.name}" has timeout_ms {d.timeout_ms}, longer than an invocation here '
+                f"(max_invocation_seconds={max_invocation_seconds}); a step that long needs a pull worker"
+            )
     dep = clean_deployment(deployment) if deployment is not None else detect_deployment()
     sdk = {"name": SDK_NAME, "version": SDK_VERSION}
     infos = [workflow_info(wf) for wf in by_name.values()]
@@ -180,7 +187,13 @@ def serve(
         try:
             io = HttpLive(inv["endpoints"]["live"], inv["token"], deadline=deadline, reserve=reserve)
             commands = await execute(
-                inv, wf, io, deadline=deadline, max_steps=max_steps_per_invocation, api_base_url=api_base_url
+                inv,
+                wf,
+                io,
+                deadline=deadline,
+                max_steps=max_steps_per_invocation,
+                api_base_url=api_base_url,
+                max_result_bytes=MAX_PUSH_RESULT_BYTES,
             )
         except InvocationSuperseded:
             return await _respond(send, 409, {"code": "invocation_superseded"})

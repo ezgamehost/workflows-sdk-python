@@ -187,10 +187,10 @@ async def test_stop_ends_polling_promptly() -> None:
 async def test_unauthorized_and_refused_polls_are_fatal() -> None:
     host = FakeLiveHost()
     await host.start()
-    host.answers = [(401, {"error": {"code": "unauthorized"}}), (401, {"error": {"code": "unauthorized"}})]
+    host.answers = [(401, {"error": {"code": "unauthorized"}})]
     with pytest.raises(WorkflowsApiError) as e:
         await asyncio.wait_for(worker(host).run(), 5)
-    assert e.value.status == 401 and len(host.polls) == 2
+    assert e.value.status == 401 and len(host.polls) == 1
     host.answers = [(403, {})]
     with pytest.raises(WorkflowsApiError):
         await asyncio.wait_for(worker(host).run(), 5)
@@ -247,9 +247,11 @@ def test_dev_names_are_sanitized(monkeypatch: pytest.MonkeyPatch) -> None:
 
     from ezgh_workflows.worker import dev_name
 
+    for k in ("USER", "USERNAME", "LOGNAME"):
+        monkeypatch.delenv(k, raising=False)
     monkeypatch.setattr(getpass, "getuser", lambda: "Matt.Zhao@corp")
     assert dev_name() == "dev-matt-zhao-corp"
-    assert dev_name("a_b") == "dev-a-b" and dev_name("___") == "dev-user" and len(dev_name("x" * 99)) == 44
+    assert dev_name("a_b") == "dev-a-b" and dev_name("___") == "dev-dev" and len(dev_name("x" * 99)) == 62
 
 
 def test_dev_mode_finds_or_creates_its_app(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -262,7 +264,7 @@ def test_dev_mode_finds_or_creates_its_app(monkeypatch: pytest.MonkeyPatch) -> N
         raise WorkflowsApiError(409, "app_exists", "exists")
 
     def list_apps(self: Client, **kw: Any) -> Any:
-        return {"apps": [{"id": APP, "name": "dev-me", "kind": "pull"}], "nextCursor": None}
+        return {"apps": [{"id": APP, "name": "dev-me", "kind": "pull", "queue": "dev-me"}], "nextCursor": None}
 
     monkeypatch.setattr(Client, "create_app", create)
     monkeypatch.setattr(Client, "list_apps", list_apps)

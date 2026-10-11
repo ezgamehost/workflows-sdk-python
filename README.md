@@ -77,6 +77,40 @@ be caught. Recorded failures come back as `WorkflowError` (or the subclass their
 **Cancellation.** A cancelled run raises `RunCancelledError` at the step the workflow is waiting on.
 Catch it (or use `finally`) to run `step.run` cleanup steps; other primitives raise at once.
 
+### Limits and guarantees
+
+- **Steps run at least once.** A step can run again if the process dies after it ran but before
+  its result was recorded; pass `ctx.step.idempotency_key()` to APIs that deduplicate.
+- **Retries:** a step that raises is retried with backoff (default 5 attempts, from 1 s doubling to
+  at most 10 minutes; override per step with `retry=`, or per workflow; partial policies merge with
+  the defaults). Bounds: `maxAttempts` 1–100, `maxMs` up to 24 hours, `multiplier` 1–10. Raise
+  `NonRetriableError` to fail at once, or `RetryAfterError(message, delay_ms)` to pick the delay
+  (0 to 24 hours), directly or as any exception's `__cause__`; an error whose `code` is
+  `workflows.non_retriable` isn't retried either. Messages and stacks are cut to 8 KiB, `data` over
+  64 KiB is dropped, and at most 8 levels of `__cause__` are kept.
+- **Sizes:** a step's result, the workflow's output, a child's input and a callback's body are each
+  at most 1 MiB of JSON (a bigger result fails the step without retries). An invocation's result is
+  at most 16 MiB (push) or 8 MiB (pull): one bigger, say many large child inputs at once, fails the
+  run non-retriably.
+- **Parallel steps:** a run has at most 32 step invocations at once (further steps wait their
+  turn), and at most 1,000 steps can start together: more fails the run (start them in batches, or
+  fan out through child workflows). A run has at most 1,000 steps.
+- **Callbacks:** the timeout is 1 s to a year (default 7 days). The first completion wins; the same
+  body again succeeds, another body is `409 callback_completed`, after the timeout `410
+  callback_expired`. Complete one with `complete_callback_url(cb.url, value)` (no API key: the
+  token is the URL's only credential, so keep it private) or `Client.complete_callback(run_id,
+  step_id, value)`.
+- **Child workflows:** `step.invoke` runs a workflow of the same app; children nest at most 10
+  deep, and each counts as one of its parent's steps. A failed child raises `ChildFailedError`
+  (`workflows.child_failed`), whose `__cause__` is the child's error.
+- **Timeouts:** `timeout_ms` (a step's, or the workflow's default) is at most 24 hours. A step
+  can't outlive its invocation, so `serve()` refuses a workflow default longer than
+  `max_invocation_seconds`; long steps need a pull worker (below).
+- **Invocation time:** an invocation stops starting steps when less than max(5 s, 10 %) of its
+  time is left, and EZGH invokes the workflow again.
+- **Protocol 1.1** is needed for parallel steps, callbacks and child workflows; at 1.0 steps run
+  one after another and `create_callback` and `invoke` fail the run with `NonRetriableError`.
+
 ### Decisions in this SDK
 
 - **Step methods return `asyncio.Future`s, registered at call time,** not coroutines. Call order is
@@ -125,7 +159,8 @@ including AWS Lambda through an ASGI adapter.
   entries (an unset environment variable at build time) are skipped.
 - `max_invocation_seconds` (1–900, default 300): at most your platform's request time limit.
 - `deployment`: recorded with each invocation; detected from `VERCEL_DEPLOYMENT_ID`,
-  `AWS_LAMBDA_FUNCTION_NAME:AWS_LAMBDA_FUNCTION_VERSION` or `K_REVISION`.
+  `AWS_LAMBDA_FUNCTION_NAME:AWS_LAMBDA_FUNCTION_VERSION` (not `$LATEST`), `K_REVISION`,
+  `FLY_MACHINE_VERSION` or `RENDER_GIT_COMMIT`.
 - `max_steps_per_invocation` (default 50).
 
 Every request's `EZGH-Signature` is verified in constant time and refused when its timestamp is more
@@ -136,7 +171,9 @@ so clock skew doesn't matter.
 
 A pull app's workflows run on your own machines: a `Worker` long-polls EZGH for tasks with an API
 key, so it needs no public endpoint, and its steps may run for hours (heartbeats keep the
-invocation alive).
+invocation alive). **A pull invocation's deadline is the longest `timeout_ms` the app's workers
+announce, at least 15 minutes and at most 24 hours,** so give a workflow whose steps can run
+longer than 15 minutes a `timeout_ms` that covers them (`@workflow("etl", timeout_ms=3 * 3_600_000)`).
 
 ```python
 from ezgh_workflows import Worker
@@ -158,17 +195,19 @@ worker.run_sync()                           # or: await worker.run(); worker.sto
   last 10 minutes.
 - While an invocation runs, the worker heartbeats every `heartbeat_interval` seconds (default 20; the
   engine's timeout is 60). When the run is cancelled, the running step's `ctx.step.cancelled()`
-  turns true, so a long step can stop early.
+  turns true, so a long step can stop early, and no further step starts in that invocation.
 - `stop()`, SIGTERM or SIGINT stop polling at once: a long poll in flight is aborted, and tasks it
   had already received still run. Running invocations get `shutdown_grace` seconds (default 30),
   and the engine re-dispatches anything abandoned after its heartbeat timeout.
-- A poll answered 401 (twice), 403, another 4xx, a redirect or a 1xx raises `WorkflowsApiError`
+- A poll answered 401, 403, another 4xx, a redirect or a 1xx raises `WorkflowsApiError`
   from `run()`. 429, 5xx, network errors and 2xx answers that aren't poll answers are retried
   after `max(Retry-After, backoff)`, the backoff doubling from 0.5 s to `backoff_max` with ±20 %
   jitter. `heartbeat_interval` is at most 30 s (the engine's heartbeat timeout is 60 s).
 - **Dev mode:** `Worker.dev(api_key=..., organization_id=..., project_id=..., workflows=[...])`
   finds or creates the pull app `dev-<user>` with the queue of the same name, so two laptops never
-  take each other's runs.
+  take each other's runs. The name is the same in every SDK: `$USER` (else `$USERNAME`,
+  `$LOGNAME`, the OS user) lowercased, each run of other characters made one `-`, at most 58
+  characters (`dev-dev` if nothing is left).
 
 ## Client
 
@@ -186,10 +225,14 @@ Apps (`create_app`, `get_app`, `list_apps`, `sync`, `rotate_secret`), runs (`sta
 (`create_schedule`, `get_schedule`, `list_schedules`, `update_schedule`, `pause_schedule`,
 `resume_schedule`, `delete_schedule`, `trigger_schedule`, `schedule_input`). `AsyncClient` has the same methods as
 coroutines. Responses are `TypedDict`s with the API's camelCase keys. Errors raise
-`WorkflowsApiError` with `status`, `code` and `retry_after_seconds`; 429, 503 and network errors are
-retried (`retries`, default 3), and writes are resent with the same `Idempotency-Key`.
-`create_app` and `rotate_secret` aren't resent after a network error, because a replay returns no
-secret: they raise `WorkflowsApiError(0, "outcome_unknown")`.
+`WorkflowsApiError` with `status`, `code` and `retry_after_seconds`; 429, 503, `409
+idempotency_in_progress` and network errors are retried after `Retry-After` (`retries`, default 3,
+at most `max_retry_delay` apart), and writes are resent with the same `Idempotency-Key`.
+`create_app` and `rotate_secret` aren't resent after a network error or a 5xx, because a replay
+returns no secret, and they never succeed without one: they raise
+`WorkflowsApiError(..., "outcome_unknown")`; check with `get_app`, and rotate the secret if you
+didn't receive it. `complete_callback_url(url, value)` (also on both clients) completes a
+callback by its URL without an API key.
 
 | Credential | What it can do |
 | --- | --- |

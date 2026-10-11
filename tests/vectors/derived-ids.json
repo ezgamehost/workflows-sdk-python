@@ -1,5 +1,5 @@
 {
-  "description": "Derived run IDs (design-phase-2, D2-8): UUIDv8 = SHA-256(domain + \"\\u0000\" + a + \"\\u0000\" + b)[0:16], byte 6 = 0x80 | (shard >> 8 & 3), byte 7 = shard & 0xff, byte 8 = 0x80 | (byte 8 & 0x3f), shard = big-endian uint16 of sum[16:18] mod 1024. Domains: workflows.child (parent run ID, step ID), workflows.schedule (schedule ID, scheduled time as RFC 3339 in UTC with Go's RFC3339Nano trimming), workflows.trigger (schedule ID, Idempotency-Key).",
+  "description": "Derived run IDs (docs/design.md, Run identity; plan D2-8): UUIDv8 = SHA-256(domain + \"\\u0000\" + a + \"\\u0000\" + b)[0:16], byte 6 = 0x80 | (shard >> 8 & 3), byte 7 = shard & 0xff, byte 8 = 0x80 | (byte 8 & 0x3f), shard = big-endian uint16 of sum[16:18] mod 1024. Domains: workflows.child (parent run ID, step ID), workflows.schedule (schedule ID, scheduled time as RFC 3339 in UTC with Go's RFC3339Nano trimming), workflows.trigger (schedule ID, Idempotency-Key).",
   "child": [
     { "parent": "01a12088-d200-7000-8899-aabbccddeeff", "stepId": "c4561e31d44f88833f9e17810d195e2f", "id": "d8155776-5986-8181-a6dc-2c41f2ab7987", "shard": 385 },
     { "parent": "01a12088-d200-7000-8899-aabbccddeeff", "stepId": "b0e8de8d4e6b1207f3869a7d8738f251", "id": "119b50cc-21cc-81cf-b934-4aa7d8f983f6", "shard": 463 }

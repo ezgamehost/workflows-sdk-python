@@ -1,5 +1,5 @@
 {
-  "description": "workflows-stack cron semantics (docs/design-phase-2.md, Cron semantics): 5-field cron plus descriptors in an IANA zone; a nonexistent local time (DST gap) is skipped; a repeated one fires once at its first instant; next is strictly after `after`. Computed by scripts/cron_vectors.py (Python zoneinfo), independent of internal/cronspec.",
+  "description": "workflows-stack cron semantics (docs/design.md, Cron semantics): 5-field cron plus descriptors in an IANA zone; a nonexistent local time (DST gap) is skipped; a repeated one fires once at its first instant; next is strictly after `after`. Computed by scripts/cron_vectors.py (Python zoneinfo), independent of internal/cronspec.",
   "cases": [
     {
       "name": "ny-gap",

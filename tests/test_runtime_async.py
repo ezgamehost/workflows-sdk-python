@@ -667,3 +667,33 @@ async def test_step_calls_from_a_step_function_are_refused() -> None:
 
     out = (await execute(invocation("nested-call"), nested_call, FakeLive()))[-1]["output"]
     assert "workflow's own code" in out
+
+
+async def test_paged_journal_keeps_each_steps_highest_seq_entry() -> None:
+    # A step that changed between page fetches comes back on a later page at a higher seq.
+    @workflow("paged-dup")
+    async def paged_dup(ctx: Context) -> Any:
+        a = await ctx.step.run("a", lambda: "live-a")
+        cb = await ctx.step.create_callback("cb", timeout="1m")
+        return [a, await cb.wait()]
+
+    from helpers import RUN_ID
+
+    from ezgh_workflows.protocol import shard_of
+
+    tok = f"{shard_of(RUN_ID):03x}." + "D" * 43
+    inline = [
+        entry(1, "a", output="A"),
+        entry(2, "cb", "waiting", kind="callback", token=tok, createdSeq=2),
+    ]
+    live = FakeLive(
+        pages=[
+            # a stale copy of "a" at a lower seq: it loses, even though it comes later
+            {"complete": False, "entries": [entry(0, "a", "running", attempt=0)]},
+            # "cb" completed between fetches: its new copy (higher seq, same createdSeq) wins
+            {"complete": True, "entries": [entry(5, "cb", kind="callback", token=tok, createdSeq=2, output="ok")]},
+        ]
+    )
+    inv = invocation("paged-dup", entries=inline, complete=False)
+    assert await execute(inv, paged_dup, live) == [{"type": "runCompleted", "output": ["A", "ok"]}]
+    assert live.page_requests == [2, 2]

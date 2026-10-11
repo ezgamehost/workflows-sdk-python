@@ -461,6 +461,14 @@ class Execution:
                 raise CheckpointFailed("workflows-live sent a malformed journal entry")
             entries.extend(dict(e) for e in page["entries"])
             complete = bool(page.get("complete")) or not page["entries"]
+        # Pages are read against the run's current state: a step that changed between fetches
+        # comes back on a later page at a higher seq. One entry per step: the highest seq wins.
+        latest: dict[str, dict[str, Any]] = {}
+        for e in entries:
+            cur = latest.get(e["stepId"])
+            if cur is None or int(e["seq"]) > int(cur["seq"]):
+                latest[e["stepId"]] = e
+        entries = list(latest.values())
         refs = [e for e in entries if isinstance(e.get("outputRef"), str)]
         for i in range(0, len(refs), 8):
             chunk = refs[i : i + 8]

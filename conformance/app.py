@@ -236,7 +236,8 @@ async def longstep(ctx: Context) -> Any:
             time.sleep(0.02)
         return "done"
 
-    return await ctx.step.run("long", long)
+    done = await ctx.step.run("long", long)
+    return await ctx.step.run("after", lambda: done)
 
 
 @workflow("branches")
@@ -253,6 +254,20 @@ async def branches(ctx: Context) -> Any:
 
     a, b = await asyncio.gather(first(), second())
     return {"a": a, "b": b}
+
+
+@workflow("cancelfanout")
+async def cancelfanout(ctx: Context) -> Any:
+    try:
+        await asyncio.gather(ctx.step.run("p0", lambda: 0), ctx.step.run("p1", lambda: 1))
+        return "done"
+    finally:
+        await ctx.step.run("cleanup", lambda: "cleaned")
+
+
+@workflow("toowide")
+async def toowide(ctx: Context) -> Any:
+    return await asyncio.gather(*(ctx.step.run(f"s{i}", _const(i)) for i in range(1001)))
 
 
 WORKFLOWS = [
@@ -285,6 +300,8 @@ WORKFLOWS = [
     pulled,
     longstep,
     branches,
+    cancelfanout,
+    toowide,
 ]
 
 app = serve(

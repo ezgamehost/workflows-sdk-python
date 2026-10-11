@@ -7,7 +7,7 @@ as code, with steps, sleeps, retries, callbacks, child workflows, parallel steps
 - Workflows are `async def` (with `Context`) or plain `def` (with `SyncContext`).
 - Speaks the EZGH Workflows protocol `1.0` and `1.1` (`ezgh_workflows.PROTOCOL_VERSIONS`).
 
-**Status:** not yet published to PyPI. Verified end to end against workflows-stack `9624505`
+**Status:** not yet published to PyPI. Verified end to end against workflows-stack `830dcb9`
 (conformance: every push and pull scenario; the end-to-end suite: runs, retries, crashes, cancel,
 callbacks, child workflows, parallel steps, schedules and a pull worker against `workflows-stack all`).
 

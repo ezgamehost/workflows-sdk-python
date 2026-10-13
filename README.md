@@ -54,6 +54,7 @@ app = serve(workflows=[onboarding, nightly], signing_secrets=[os.environ.get("EZ
 | `now(name)`, `uuid(name)` | A recorded time (an aware UTC `datetime`) or UUID: the same on every replay. |
 | `create_callback(name, *, timeout="7d", id=None)` | A callback URL (`cb.url`, `cb.token`); `await cb.wait()` suspends until it's completed. |
 | `invoke(name, *, workflow, input=None, id=None)` | Runs a child workflow of the same app and returns its output, or raises `ChildFailedError`. |
+| `send_to_queue(name, client, queue_id, messages)` | Sends 1–10 messages to an EZGH queue, once (see [Sending to a queue](#sending-to-a-queue)). |
 | `parallel((name, fn), ...)` | Sync workflows only: runs several steps at once. |
 
 Inside a step function, `ctx.step.attempt()`, `ctx.step.idempotency_key()` (`<runId>:<stepId>:<attempt>`,
@@ -78,6 +79,51 @@ be caught. Recorded failures come back as `WorkflowError` (or the subclass their
 
 **Cancellation.** A cancelled run raises `RunCancelledError` at the step the workflow is waiting on.
 Catch it (or use `finally`) to run `step.run` cleanup steps; other primitives raise at once.
+
+### Sending to a queue
+
+`ctx.step.send_to_queue(name, client, queue_id, messages)` sends 1–10 messages to an
+[EZGH Queues](https://ezghcloud.com) queue in a step, and returns the recorded result
+(`{"messages": [{"messageId", "seq"?, "duplicate"?}]}`, one per message, in order). It's `step.run`
+around `client.send`, so a replay returns the result without sending again. The client is a
+`QueuesClient` with your own API key (it needs `queues.messages.send` on the queue): push apps hold
+no API key, so the step never borrows a credential. Messages are dicts with the API's camelCase keys.
+
+```python
+from ezgh_workflows import QueuesClient
+
+queues = QueuesClient(api_key=os.environ["EZGH_API_KEY"], organization_id=ORG, project_id=PROJECT)
+# base_url defaults to https://queues-api.ezghcloud.com
+
+
+@workflow("order")
+async def order(ctx: Context) -> None:
+    placed = await ctx.step.run("place", lambda: shop.place(ctx.input))
+    await ctx.step.send_to_queue(
+        "notify", queues, "que_…",
+        [{"body": json.dumps(placed), "attributes": {"orderId": placed["id"]}, "groupId": placed["accountId"]}],
+    )
+```
+
+- **Sent once.** Every attempt of the step sends the `Idempotency-Key`
+  `wfq_<hex(SHA-256(run_id + ":" + step_id))>`, which the Queues API honors for 48 hours: an attempt
+  that resends after a crash (between the send and the step's record) gets the first answer instead
+  of a second copy, on standard and FIFO queues alike. So keep `messages` deterministic: the same
+  key with a different body is a `409 idempotency_conflict`.
+- **FIFO dedup IDs.** A message with a `groupId` (a FIFO queue's message) and no `dedupId` of its
+  own is sent with `dedupId` `<that hex>:<index>`; FIFO queues also drop a repeat within their
+  5-minute window. Messages without a `groupId` are sent as they are, since standard queues refuse
+  `dedupId`.
+- **Errors.** The client resends a 429 (but not `quota_exceeded`), any 5xx, a 409
+  `idempotency_in_progress` and network errors after `Retry-After` (`retries`, default 3, at most
+  `max_retry_delay`, default 10 s, apart), then raises `QueuesApiError` with `status`, `code` and
+  `retry_after_seconds`. In the step, what's still failing is retried by the step's retry policy,
+  but another 4xx (a bad message, a missing queue, a refused permission) fails the step at once:
+  `NonRetriableError` caused by the `QueuesApiError`.
+
+Sync workflows call it the same way, without `await`. `queues.send(queue_id, messages,
+idempotency_key=None)` works outside workflows too (blocking; without a key, each call gets a random
+one, kept across its resends).
 
 ### Tracing
 

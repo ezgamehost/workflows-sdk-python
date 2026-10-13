@@ -2,13 +2,23 @@
 
 import asyncio
 import threading
-from collections.abc import Awaitable, Callable, Mapping
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from contextvars import ContextVar
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
 from ..protocol._types import ScheduleInfo
+from ..queues import (
+    QueueMessage,
+    QueuesApiError,
+    QueuesClient,
+    SentMessages,
+    check_messages,
+    send_to_queue_digest,
+    with_dedup_ids,
+)
+from .errors import NonRetriableError
 
 if TYPE_CHECKING:
     from .execution import Execution
@@ -103,6 +113,33 @@ class _StepInfo:
         return _current().is_cancelled()
 
 
+def _queue_sender(
+    ex: "Execution", client: QueuesClient, queue_id: str, messages: Sequence[QueueMessage]
+) -> Callable[[], SentMessages]:
+    """send_to_queue's step function: client.send with the step's Idempotency-Key and FIFO dedupIds."""
+    if not isinstance(client, QueuesClient):
+        raise TypeError("step.send_to_queue needs a QueuesClient")
+    if not isinstance(queue_id, str) or not queue_id:
+        raise ValueError("step.send_to_queue needs a queue_id")
+    check_messages(messages)
+    msgs: list[QueueMessage] = [dict(m) for m in messages]  # type: ignore[misc]
+    run_id: str = ex.inv["run"]["id"]
+
+    def send() -> SentMessages:
+        # The step's idempotency key is f"{run_id}:{step_id}:{attempt}": without the attempt, it's
+        # the same on every attempt of this step (and different for every other step and run).
+        key = _current().idempotency_key
+        digest = send_to_queue_digest(run_id, key[len(run_id) + 1 : key.rindex(":")])
+        try:
+            return client.send(queue_id, with_dedup_ids(msgs, digest), idempotency_key="wfq_" + digest)
+        except QueuesApiError as e:
+            if e.refused():
+                raise NonRetriableError(f"Sending to the queue {queue_id} was refused: {e.status} {e.code}: {e}") from e
+            raise
+
+    return send
+
+
 class Step(_StepInfo):
     """The durable primitives. Every call registers its step at once and returns an
     asyncio.Future, so asyncio.gather and asyncio.wait work on them directly."""
@@ -151,6 +188,20 @@ class Step(_StepInfo):
         (protocol 1.1)."""
         return self._ex.call_async(lambda: self._ex.register_invoke(name, workflow, input, id))
 
+    def send_to_queue(
+        self, name: str, client: QueuesClient, queue_id: str, messages: Sequence[QueueMessage]
+    ) -> "asyncio.Future[SentMessages]":
+        """Sends 1-10 messages to an EZGH queue in a step (step.run around client.send) and returns
+        the recorded result. Every attempt sends Idempotency-Key "wfq_" + hex(SHA-256(run_id + ":" +
+        step_id)), and each message with a groupId (FIFO) and no dedupId of its own gets the dedupId
+        <that hex>:<index>, so the step sends its messages once. A 4xx refusal (other than 408, 429
+        and 409 idempotency_in_progress) fails the step without retries (NonRetriableError, caused
+        by the QueuesApiError)."""
+        ex = self._ex
+        return ex.call_async(
+            lambda: ex.register_run(name, _queue_sender(ex, client, queue_id, messages), None, None, None)
+        )
+
 
 class SyncStep(_StepInfo):
     """Step's calls, blocking, for plain def workflows; parallel() runs several steps at once."""
@@ -189,6 +240,16 @@ class SyncStep(_StepInfo):
 
     def invoke(self, name: str, *, workflow: "str | Any", input: Any = None, id: str | None = None) -> Any:
         return self._ex.call_sync([lambda: self._ex.register_invoke(name, workflow, input, id)])[0]
+
+    def send_to_queue(
+        self, name: str, client: QueuesClient, queue_id: str, messages: Sequence[QueueMessage]
+    ) -> SentMessages:
+        """Step.send_to_queue, blocking."""
+        ex = self._ex
+        out: SentMessages = ex.call_sync(
+            [lambda: ex.register_run(name, _queue_sender(ex, client, queue_id, messages), None, None, None)]
+        )[0]
+        return out
 
     def parallel(self, *branches: tuple[str, Callable[[], Any]]) -> list[Any]:
         """Runs each (name, fn) as its own step, concurrently; returns the results in branch order.

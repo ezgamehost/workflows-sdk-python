@@ -14,6 +14,7 @@ from ._runtime.workflow import Workflow, workflow
 from ._version import SDK_VERSION as __version__
 from .client import AsyncClient, Client, WorkflowsApiError, complete_callback_url
 from .protocol import PROTOCOL_VERSIONS
+from .queues import QueueMessage, QueuesApiError, QueuesClient, SentMessage, SentMessages
 from .serve import serve
 from .worker import Worker
 
@@ -26,10 +27,15 @@ __all__ = [
     "Client",
     "Context",
     "NonRetriableError",
+    "QueueMessage",
+    "QueuesApiError",
+    "QueuesClient",
     "RetryAfterError",
     "RunCancelledError",
     "RunMeta",
     "ScheduleMeta",
+    "SentMessage",
+    "SentMessages",
     "StepTimeoutError",
     "SyncCallback",
     "SyncContext",

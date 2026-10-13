@@ -157,3 +157,17 @@ async def test_code_busy_outside_steps_past_the_budget_ends_the_invocation() -> 
     cmds = await execute(invocation("sync-stuck"), sync_stuck, live, deadline=start + 5.5)
     assert cmds == [{"type": "stepCompleted", "stepId": sid("a"), "name": "a", "output": 1}]
     assert t.time() - start < 1.0
+
+
+@workflow("sync-traced")
+def sync_traced(ctx: SyncContext) -> str:
+    return ctx.traceparent
+
+
+async def test_traceparent_on_both_contexts_and_empty_when_absent_or_not_a_string() -> None:
+    tp = "00-0199a3d02b3c7d4e9f506b7c8d9e0f1a-0123456789abcdef-01"
+    for value, want in ((tp, tp), (None, ""), (7, "")):
+        inv: Any = invocation("sync-traced")
+        if value is not None:
+            inv["traceparent"] = value
+        assert await execute(inv, sync_traced, FakeLive()) == [{"type": "runCompleted", "output": want}]

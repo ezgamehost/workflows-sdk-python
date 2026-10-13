@@ -77,6 +77,9 @@ class Invocation(TypedDict):
     targetStepId: NotRequired[str]
     deadline: str
     cancel: Cancel | None
+    # A pulled invocation's W3C traceparent, sent while the project's observability setting is on
+    # (a push request carries it as the traceparent header instead).
+    traceparent: NotRequired[str]
 
 
 Command = dict[str, Any]  # one of the command shapes; built only by the runtime

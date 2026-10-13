@@ -204,7 +204,8 @@
         },
         "targetStepId": "314ad9948a19a4844e0ea75b7de59ecd",
         "deadline": "2026-10-09T12:05:00Z",
-        "cancel": null
+        "cancel": null,
+        "traceparent": "00-01a12088d20073ff8899aabbccddeeff-5d9656e97242dfa6-01"
       }
     ],
     "invalid": [
@@ -863,7 +864,8 @@
             },
             "targetStepId": "314ad9948a19a4844e0ea75b7de59ecd",
             "deadline": "2026-10-09T12:05:00Z",
-            "cancel": null
+            "cancel": null,
+            "traceparent": "00-01a12088d20073ff8899aabbccddeeff-5d9656e97242dfa6-01"
           }
         ]
       }

@@ -625,6 +625,10 @@ class Execution:
             sched = ScheduleMeta(s["id"], datetime.fromtimestamp(parse_time(s["scheduledTime"]), UTC), s)
         return RunMeta(r["id"], r.get("runKey"), r["attempt"], sched)
 
+    def _traceparent(self) -> str:
+        tp = self.inv.get("traceparent")
+        return tp if isinstance(tp, str) else ""
+
     def _ended(self, kind: str, value: Any) -> None:
         """On the driver's loop: the workflow returned, raised, crashed or went away."""
         if not self.closed:
@@ -651,7 +655,7 @@ class Execution:
     async def _run_async(self) -> None:
         """The workflow, on its own loop."""
         try:
-            r = self.d.fn(Context(self.inv["run"].get("input"), self._meta(), Step(self)))
+            r = self.d.fn(Context(self.inv["run"].get("input"), self._meta(), Step(self), self._traceparent()))
             result = await r if inspect.isawaitable(r) else r
         except InvocationEnded:
             self._post(self._ended, "gone", None)
@@ -708,7 +712,7 @@ class Execution:
 
     def _start_sync(self) -> None:
         self._sync_step = SyncStep(self)
-        ctx = SyncContext(self.inv["run"].get("input"), self._meta(), self._sync_step)
+        ctx = SyncContext(self.inv["run"].get("input"), self._meta(), self._sync_step, self._traceparent())
         fn = self.d.fn
 
         def target() -> None:

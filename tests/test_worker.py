@@ -123,7 +123,7 @@ async def test_worker_polls_runs_and_completes() -> None:
         "maxTasks": 3,
         "workerId": "w-1",
         "protocolVersions": ["1.0", "1.1"],
-        "sdk": {"name": "ezgh-workflows", "version": "0.1.0"},
+        "sdk": {"name": "ezgh-workflows", "version": "0.2.0"},
         "workflows": [{"name": "pulled"}, {"name": "longstep"}],
     }
     assert host.polls[1]["workflows"] == host.polls[0]["workflows"]  # every poll announces
@@ -430,3 +430,23 @@ async def test_tasks_received_as_the_worker_stops_still_run() -> None:
     await asyncio.wait_for(task, 10)
     assert len(host.completed) == 1, (host.polls, host.checkpoints, host.answers)
     assert host.completed[0]["commands"][-1]["type"] == "runCompleted"
+
+
+@workflow("traced")
+async def traced(ctx: Context) -> str:
+    return ctx.traceparent
+
+
+async def test_traceparent_is_the_pulled_invocations_field() -> None:
+    tp = "00-0199a3d02b3c7d4e9f506b7c8d9e0f1a-0123456789abcdef-01"
+    host = FakeLiveHost()
+    await host.start()
+    with_it = {**host.task("traced"), "traceparent": tp, "token": "tok-with"}
+    host.answers = [(200, {"invocations": [with_it, {**host.task("traced"), "token": "tok-without"}]})]
+    w = worker(host, workflows=[traced], max_tasks=2, concurrency=2)
+    task = asyncio.create_task(w.run())
+    await until(lambda: len(host.completed) == 2)
+    w.stop()
+    await asyncio.wait_for(task, 5)
+    outputs = sorted(c["commands"][-1]["output"] for c in host.completed)
+    assert outputs == ["", tp]

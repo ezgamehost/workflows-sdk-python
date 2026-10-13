@@ -210,3 +210,24 @@ def test_deployment_detection(monkeypatch: pytest.MonkeyPatch) -> None:
     from ezgh_workflows._env import clean_deployment
 
     assert clean_deployment("a\u0000b") == "ab" and clean_deployment("") is None
+
+
+TP = "00-0199a3d02b3c7d4e9f506b7c8d9e0f1a-0123456789abcdef-01"
+
+
+@workflow("traced")
+async def traced(ctx: Context) -> str:
+    return ctx.traceparent
+
+
+async def test_traceparent_is_the_push_requests_header() -> None:
+    a = serve(workflows=[traced], signing_secrets=[SECRET])
+    body = json.dumps(invocation("traced")).encode()
+    status, res = await call(a, body, {**signed(body), "traceparent": TP})
+    assert status == 200 and res["commands"] == [{"type": "runCompleted", "output": TP}]
+    status, res = await call(a, body, signed(body))
+    assert status == 200 and res["commands"] == [{"type": "runCompleted", "output": ""}]
+    # A push invocation's traceparent is the header's: a body field isn't read.
+    with_field = json.dumps({**invocation("traced"), "traceparent": TP}).encode()
+    status, res = await call(a, with_field, signed(with_field))
+    assert status == 200 and res["commands"] == [{"type": "runCompleted", "output": ""}]

@@ -165,6 +165,8 @@ def serve(
             inv = parse_invocation(body)
         except InvalidInvocation as e:
             return await _respond(send, 400, {"code": "invalid_invocation", "message": str(e)})
+        # A push request carries the traceparent as a header (only while the setting is on).
+        inv["traceparent"] = (_header(scope, b"traceparent") or b"").decode("latin-1")
         if inv["kind"] == "sync":
             reply: dict[str, Any] = {
                 "protocolVersions": list(PROTOCOL_VERSIONS),

@@ -7,7 +7,7 @@ as code, with steps, sleeps, retries, callbacks, child workflows, parallel steps
 - Workflows are `async def` (with `Context`) or plain `def` (with `SyncContext`).
 - Speaks the EZGH Workflows protocol `1.0` and `1.1` (`ezgh_workflows.PROTOCOL_VERSIONS`).
 
-**Status:** not yet published to PyPI. Verified end to end against workflows-stack `830dcb9`
+**Status:** not yet published to PyPI. Verified end to end against workflows-stack `ec53771`
 (conformance: every push and pull scenario; the end-to-end suite: runs, retries, crashes, cancel,
 callbacks, child workflows, parallel steps, schedules and a pull worker against `workflows-stack all`).
 
@@ -67,6 +67,8 @@ on a pull worker, the run is cancelling) describe the running attempt. Step func
   and `step.uuid` instead of clocks and randomness.
 - `ctx.run` is `RunMeta(id, run_key, attempt, schedule)`; `schedule` is `ScheduleMeta(id,
   scheduled_time)` for runs a schedule started.
+- `ctx.traceparent` is the invocation's W3C traceparent, `""` while the project's Workflows
+  observability setting is off (see [Tracing](#tracing)).
 
 **Errors.** Raise `NonRetriableError` to fail a step at once, or `RetryAfterError(message, delay_ms)`
 to retry after a given delay. A step that exhausts its retries raises into the workflow, where it can
@@ -76,6 +78,32 @@ be caught. Recorded failures come back as `WorkflowError` (or the subclass their
 
 **Cancellation.** A cancelled run raises `RunCancelledError` at the step the workflow is waiting on.
 Catch it (or use `finally`) to run `step.run` cleanup steps; other primitives raise at once.
+
+### Tracing
+
+While the project's Workflows observability setting is on, EZGH sends each invocation a W3C
+`traceparent` (the push request's header, or a pulled invocation's field), and `ctx.traceparent` is
+that value exactly as received. It's `""` while the setting is off, so a parent-based sampler never
+waits for a parent that won't arrive. The SDK has no OpenTelemetry dependency; with
+`opentelemetry-api`, parent your own spans on it. Start them inside step functions: code outside
+steps re-runs on every replay.
+
+```python
+from opentelemetry import trace
+from opentelemetry.trace.propagation.tracecontext import TraceContextTextMapPropagator
+
+tracer = trace.get_tracer("billing")
+
+
+@workflow("charge")
+async def charge(ctx: Context) -> str:
+    def charge_card() -> str:
+        parent = TraceContextTextMapPropagator().extract({"traceparent": ctx.traceparent})
+        with tracer.start_as_current_span("charge card", context=parent):
+            return payments.charge(ctx.input)
+
+    return await ctx.step.run("charge-card", charge_card)
+```
 
 ### Limits and guarantees
 

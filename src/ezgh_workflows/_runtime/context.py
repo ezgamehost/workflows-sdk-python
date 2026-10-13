@@ -208,6 +208,10 @@ class Context:
     input: Any
     run: RunMeta
     step: Step
+    # The invocation's W3C traceparent, exactly as received (the push request's traceparent header,
+    # or a pulled invocation's traceparent field), while the project's observability setting is on;
+    # "" otherwise. Parent your own spans on it: the SDK has no OpenTelemetry dependency.
+    traceparent: str = ""
 
 
 @dataclass(frozen=True)
@@ -217,3 +221,7 @@ class SyncContext:
     input: Any
     run: RunMeta
     step: SyncStep
+    # The invocation's W3C traceparent, exactly as received (the push request's traceparent header,
+    # or a pulled invocation's traceparent field), while the project's observability setting is on;
+    # "" otherwise. Parent your own spans on it: the SDK has no OpenTelemetry dependency.
+    traceparent: str = ""

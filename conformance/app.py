@@ -270,6 +270,11 @@ async def toowide(ctx: Context) -> Any:
     return await asyncio.gather(*(ctx.step.run(f"s{i}", _const(i)) for i in range(1001)))
 
 
+@workflow("traced")
+async def traced(ctx: Context) -> Any:
+    return ctx.traceparent
+
+
 WORKFLOWS = [
     sequence,
     echo,
@@ -302,6 +307,7 @@ WORKFLOWS = [
     branches,
     cancelfanout,
     toowide,
+    traced,
 ]
 
 app = serve(

@@ -24,6 +24,7 @@ import contextlib
 import inspect
 import json
 import math
+import re
 import threading
 import time
 import uuid as uuidlib
@@ -42,7 +43,7 @@ from ..protocol._codec import (
     json_byte_length,
     parse_duration,
 )
-from ..protocol._ids import STEP_ID_OVERRIDE, WORKFLOW_NAME, new_callback_token, shard_of, step_id
+from ..protocol._ids import STEP_ID_OVERRIDE, WORKFLOW_NAME, is_uuid, new_callback_token, shard_of, step_id
 from ..protocol._types import Command, Invocation, JournalEntry, RetryPolicy, WireError
 from .context import (
     CURRENT_STEP,
@@ -131,6 +132,21 @@ def _supports_parallel(version: str) -> bool:
         return major == "1"
 
 
+def _supports_messages(version: str) -> bool:
+    """Protocol 1.2 and later wait for queue messages."""
+    major, _, minor = version.partition(".")
+    try:
+        return (int(major), int(minor.split(".")[0] or "0")) >= (1, 2)
+    except ValueError:
+        return False
+
+
+# Message waits (protocol 1.2): the queue's ID (a UUID), the key, and the timeout (1 s to 30 days).
+MESSAGE_KEY = re.compile(r"[A-Za-z0-9_.:-]{1,256}")
+MIN_MESSAGE_TIMEOUT_MS = 1000
+MAX_MESSAGE_TIMEOUT_MS = 2_592_000_000
+
+
 def _cause_chain(e: BaseException) -> list[BaseException]:
     """e and its causes (__cause__), at most 64 deep."""
     out: list[BaseException] = []
@@ -151,7 +167,7 @@ def _json_copy(v: Any) -> Any:
 class _Call:
     order: int
     name: str
-    kind: str  # run | sleep | value | callback | wait | invoke
+    kind: str  # run | sleep | value | callback | wait | invoke | message
     step_id: str
     future: "asyncio.Future[Any] | None" = None  # async workflows: on the workflow's loop
     explicit: str | None = None
@@ -165,6 +181,8 @@ class _Call:
     workflow: str | None = None
     has_input: bool = False
     input: Any = None
+    queue_id: str | None = None  # message
+    key: str | None = None  # message
     outcome: tuple[bool, Any] | None = None  # set by the driver, under the lock
     settled_n: int = 0
 
@@ -252,6 +270,12 @@ class Execution:
                 self.fatal = encode_error(
                     NonRetriableError(
                         f"step.{what} needs protocol 1.1; this invocation is {self.inv['protocolVersion']}"
+                    )
+                )
+            if kind == "message" and not _supports_messages(self.inv["protocolVersion"]) and self.fatal is None:
+                self.fatal = encode_error(
+                    NonRetriableError(
+                        f"step.wait_for_message needs protocol 1.2; this invocation is {self.inv['protocolVersion']}"
                     )
                 )
             if explicit is not None:
@@ -348,6 +372,26 @@ class Execution:
             if json_byte_length(encoded) > MAX_OUTPUT_BYTES:
                 raise ValueError("step.invoke's input is at most 1 MiB of JSON")
         return self._register("invoke", name, explicit, workflow=wf_name, has_input=input is not None, input=encoded)
+
+    def register_message(
+        self, name: str, queue_id: str, key: str, timeout_seconds: float, explicit: str | None
+    ) -> _Call:
+        if not is_uuid(queue_id):
+            raise ValueError(
+                f"step.wait_for_message needs the queue's ID (a lowercase UUID, not its que_ slug); got {queue_id!r}"
+            )
+        if not isinstance(key, str) or not MESSAGE_KEY.fullmatch(key):
+            raise ValueError(f"step.wait_for_message's key matches ^[A-Za-z0-9_.:-]{{1,256}}$; got {key!r}")
+        if (
+            not isinstance(timeout_seconds, int | float)
+            or isinstance(timeout_seconds, bool)
+            or not math.isfinite(timeout_seconds)
+        ):
+            raise ValueError("step.wait_for_message's timeout_seconds is a number")
+        ms = round(timeout_seconds * 1000)
+        if not MIN_MESSAGE_TIMEOUT_MS <= ms <= MAX_MESSAGE_TIMEOUT_MS:
+            raise ValueError("step.wait_for_message's timeout_seconds is from 1 to 2,592,000 (30 days)")
+        return self._register("message", name, explicit, queue_id=queue_id, key=key, timeout_ms=ms)
 
     def register_wait(self, create: _Call) -> _Call:
         """Callback.wait(): a pending call on the callback's own step ID that neither advances the
@@ -447,6 +491,8 @@ class Execution:
         if status == "completed":
             if c.kind == "sleep":
                 return self._resolve(c, None)
+            if c.kind == "message" and e.get("timedOut"):
+                return self._resolve(c, None)  # the timeout passed: no message
             out = e.get("output")
             if c.kind == "value" and c.produce == "now" and isinstance(out, str):
                 try:
@@ -893,6 +939,9 @@ class Execution:
             if head is not None and head.kind == "callback" and head.step_id not in self.journal:
                 await self._create_callback(head)
                 continue
+            if head is not None and head.kind == "message" and head.step_id not in self.journal:
+                await self._create_message_wait(head)
+                continue
             nxt = self._plan(pending) if parallel else self._sequential(c)
             if isinstance(nxt, list):
                 return self._finish_result(nxt)
@@ -955,6 +1004,29 @@ class Execution:
         }
         self._resolve(c, self._handle(c, token))
 
+    async def _create_message_wait(self, c: _Call) -> None:
+        """Records the wait (protocol 1.2) in an acknowledged checkpoint. The call stays pending: the
+        invocation ends with waitForMessage (_plan), as Callback.wait() ends it with waitForCallback."""
+        created: Command = {
+            "type": "messageWaitCreated",
+            "stepId": c.step_id,
+            "name": c.name,
+            "queueId": c.queue_id,
+            "key": c.key,
+            "timeoutMs": c.timeout_ms,
+        }
+        await self._checkpoint([*self._take_outbox(), created])
+        self.journal[c.step_id] = {
+            "seq": 2**62,
+            "stepId": c.step_id,
+            "name": c.name,
+            "kind": "message",
+            "status": "waiting",
+            "attempt": 1,
+            "queueId": c.queue_id or "",
+            "key": c.key or "",
+        }
+
     def _planned(self, c: _Call) -> Command:
         s: Command = {"stepId": c.step_id, "name": c.name, "retry": c.retry}
         if c.timeout_ms:
@@ -1000,7 +1072,12 @@ class Execution:
             elif p.kind == "wait" and p.step_id not in waited and (e is None or e.get("status") not in RECORDED):
                 waited.add(p.step_id)
                 suspends.append({"type": "waitForCallback", "stepId": p.step_id})
-            # value and callback calls are handled when they're the oldest new call.
+            elif p.kind == "message" and e is not None and p.step_id not in waited:
+                # A created wait suspends, every time; a new one is created first (as the oldest new
+                # call), like a callback.
+                waited.add(p.step_id)
+                suspends.append({"type": "waitForMessage", "stepId": p.step_id})
+            # value and callback calls (and new message waits) are handled when they're the oldest new call.
         if busy == 0 and not suspends and len(runs) + len(retrying) == 1:
             c = runs[0] if runs else retrying[0]
             e = self.journal.get(c.step_id)

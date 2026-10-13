@@ -275,6 +275,16 @@ async def traced(ctx: Context) -> Any:
     return ctx.traceparent
 
 
+@workflow("waitmessage")
+async def waitmessage(ctx: Context) -> Any:
+    m = await ctx.step.wait_for_message(
+        "paid", queue_id=ctx.input["queueId"], key=ctx.input["key"], timeout_seconds=3600
+    )
+    if m is None:
+        return {"received": False}
+    return {"received": True, "body": m["body"], "messageId": m["messageId"]}
+
+
 WORKFLOWS = [
     sequence,
     echo,
@@ -308,6 +318,7 @@ WORKFLOWS = [
     cancelfanout,
     toowide,
     traced,
+    waitmessage,
 ]
 
 app = serve(

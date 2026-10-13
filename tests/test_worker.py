@@ -122,7 +122,7 @@ async def test_worker_polls_runs_and_completes() -> None:
         "queue": "conformance",
         "maxTasks": 3,
         "workerId": "w-1",
-        "protocolVersions": ["1.0", "1.1"],
+        "protocolVersions": ["1.0", "1.1", "1.2"],
         "sdk": {"name": "ezgh-workflows", "version": "0.2.0"},
         "workflows": [{"name": "pulled"}, {"name": "longstep"}],
     }

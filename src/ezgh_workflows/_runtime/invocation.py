@@ -34,6 +34,8 @@ def valid_entry(e: object) -> bool:
         return False
     if not isinstance(e.get("status"), str):
         return False
+    if e.get("kind") == "message" and not (isinstance(e.get("queueId"), str) and isinstance(e.get("key"), str)):
+        return False  # a message entry (1.2) names its queue and key
     created = e.get("createdSeq")
     return created is None or (_int(created) and created >= 1)
 

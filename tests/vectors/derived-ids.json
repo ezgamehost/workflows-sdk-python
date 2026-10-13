@@ -1,5 +1,5 @@
 {
-  "description": "Derived run IDs (docs/design.md, Run identity; plan D2-8): UUIDv8 = SHA-256(domain + \"\\u0000\" + a + \"\\u0000\" + b)[0:16], byte 6 = 0x80 | (shard >> 8 & 3), byte 7 = shard & 0xff, byte 8 = 0x80 | (byte 8 & 0x3f), shard = big-endian uint16 of sum[16:18] mod 1024. Domains: workflows.child (parent run ID, step ID), workflows.schedule (schedule ID, scheduled time as RFC 3339 in UTC with Go's RFC3339Nano trimming), workflows.trigger (schedule ID, Idempotency-Key).",
+  "description": "Derived run IDs (docs/design.md, Run identity; plan D2-8): UUIDv8 = SHA-256(domain + \"\\u0000\" + a + \"\\u0000\" + b)[0:16], byte 6 = 0x80 | (shard >> 8 & 3), byte 7 = shard & 0xff, byte 8 = 0x80 | (byte 8 & 0x3f), shard = big-endian uint16 of sum[16:18] mod 1024. Domains: workflows.child (parent run ID, step ID), workflows.schedule (schedule ID, scheduled time as RFC 3339 in UTC with Go's RFC3339Nano trimming), workflows.trigger (schedule ID, Idempotency-Key), workflows.queue (project ID, then queue ID + \"\\u0000\" + message ID: a run a queue message starts, EZGH Queues).",
   "child": [
     { "parent": "01a12088-d200-7000-8899-aabbccddeeff", "stepId": "c4561e31d44f88833f9e17810d195e2f", "id": "d8155776-5986-8181-a6dc-2c41f2ab7987", "shard": 385 },
     { "parent": "01a12088-d200-7000-8899-aabbccddeeff", "stepId": "b0e8de8d4e6b1207f3869a7d8738f251", "id": "119b50cc-21cc-81cf-b934-4aa7d8f983f6", "shard": 463 }
@@ -12,6 +12,12 @@
   "triggered": [
     { "scheduleId": "01a12088-d200-7201-8899-aabbccddeeff", "idempotencyKey": "trigger-1", "id": "4470ea2f-12c0-836e-b6b0-9c9dde57f178", "shard": 878 },
     { "scheduleId": "01a12088-d200-7201-8899-aabbccddeeff", "idempotencyKey": "k:with.dots-2", "id": "e37782e8-22e2-80a1-af04-451cb14de333", "shard": 161 }
+  ],
+  "queue": [
+    { "projectId": "0199a3d0-0000-7000-8000-000000000002", "queueId": "0199a3d0-1111-7000-8000-00000000aaaa", "messageId": "0199a3d0-2222-7000-8000-000000000001", "id": "1265871c-17e3-80f8-9da7-b677460f50b3", "shard": 248 },
+    { "projectId": "0199a3d0-0000-7000-8000-000000000002", "queueId": "0199a3d0-1111-7000-8000-00000000aaaa", "messageId": "0199a3d0-2222-7000-8000-000000000002", "id": "d7f4fa2b-0fff-80af-bc59-e0a4d3f24999", "shard": 175 },
+    { "projectId": "0199a3d0-0000-7000-8000-000000000003", "queueId": "0199a3d0-1111-7000-8000-00000000aaaa", "messageId": "0199a3d0-2222-7000-8000-000000000001", "id": "5f6b9bfa-fe0b-823b-a33b-c88eb03c4c7f", "shard": 571 },
+    { "projectId": "0199a3c2-6c2f-7e51-8a4b-3d9f7c2e5a81", "queueId": "0199a3d0-1111-7000-8000-00000000aaaa", "messageId": "0199a3d0-2222-7000-8000-000000000001", "id": "8221b36d-a203-8314-b394-9b0b3da47919", "shard": 788 }
   ],
   "jitter": [
     { "scheduleId": "01a12088-d200-7201-8899-aabbccddeeff", "scheduledTime": "2026-10-10T00:00:00Z", "jitterSeconds": 600, "offsetSeconds": 205 },

@@ -206,6 +206,83 @@
         "deadline": "2026-10-09T12:05:00Z",
         "cancel": null,
         "traceparent": "00-01a12088d20073ff8899aabbccddeeff-5d9656e97242dfa6-01"
+      },
+      {
+        "protocolVersion": "1.2",
+        "kind": "orchestrate",
+        "invocationId": "inv_aaaqeayeaudaocajbifqydiob4",
+        "token": "3ff.01a12088-d200-73ff-8899-aabbccddeeff.inv_aaaqeayeaudaocajbifqydiob4.AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyA",
+        "endpoints": {
+          "live": "https://workflows-live.ezghcloud.com"
+        },
+        "run": {
+          "id": "01a12088-d200-73ff-8899-aabbccddeeff",
+          "runKey": "order-8812",
+          "workflow": "onboarding",
+          "input": {
+            "userId": "u_1"
+          },
+          "attempt": 1,
+          "startedAt": "2026-10-09T12:00:00Z"
+        },
+        "journal": {
+          "complete": true,
+          "entries": [
+            {
+              "seq": 1,
+              "stepId": "9c1b4d0f2a7e5b3c8d6e1f0a2b3c4d5e",
+              "name": "payment",
+              "kind": "message",
+              "status": "completed",
+              "attempt": 0,
+              "queueId": "0199a3d0-1111-7000-8000-00000000aaaa",
+              "key": "order:o-1",
+              "output": {
+                "messageId": "0199a3d0-2222-7000-8000-000000000001",
+                "body": "paid",
+                "attributes": {
+                  "orderId": "order:o-1"
+                },
+                "sentAt": "2026-10-09T12:00:01Z",
+                "queueId": "0199a3d0-1111-7000-8000-00000000aaaa"
+              }
+            },
+            {
+              "seq": 2,
+              "stepId": "a1b2c3d4e5f60718293a4b5c6d7e8f90",
+              "name": "shipped",
+              "kind": "message",
+              "status": "completed",
+              "attempt": 0,
+              "queueId": "0199a3d0-1111-7000-8000-00000000aaaa",
+              "key": "order:o-1",
+              "timedOut": true
+            },
+            {
+              "seq": 3,
+              "stepId": "0f1e2d3c4b5a69788796a5b4c3d2e1f0",
+              "name": "refund",
+              "kind": "message",
+              "status": "waiting",
+              "attempt": 0,
+              "queueId": "0199a3d0-1111-7000-8000-00000000aaaa",
+              "key": "order:o-2"
+            },
+            {
+              "seq": 4,
+              "stepId": "1f1e2d3c4b5a69788796a5b4c3d2e1f0",
+              "name": "large",
+              "kind": "message",
+              "status": "completed",
+              "attempt": 0,
+              "queueId": "0199a3d0-1111-7000-8000-00000000aaaa",
+              "key": "order:o-3",
+              "outputRef": "pay_aaaaaaaaaaaaaaaaaaaaaaaaaa"
+            }
+          ]
+        },
+        "deadline": "2026-10-09T12:05:00Z",
+        "cancel": null
       }
     ],
     "invalid": [
@@ -319,6 +396,41 @@
           ]
         },
         "targetStepId": "314ad9948a19a4844e0ea75b7de59ecd",
+        "deadline": "2026-10-09T12:05:00Z",
+        "cancel": null
+      },
+      {
+        "protocolVersion": "1.2",
+        "kind": "orchestrate",
+        "invocationId": "inv_aaaqeayeaudaocajbifqydiob4",
+        "token": "3ff.01a12088-d200-73ff-8899-aabbccddeeff.inv_aaaqeayeaudaocajbifqydiob4.AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyA",
+        "endpoints": {
+          "live": "https://workflows-live.ezghcloud.com"
+        },
+        "run": {
+          "id": "01a12088-d200-73ff-8899-aabbccddeeff",
+          "runKey": "order-8812",
+          "workflow": "onboarding",
+          "input": {
+            "userId": "u_1"
+          },
+          "attempt": 1,
+          "startedAt": "2026-10-09T12:00:00Z"
+        },
+        "journal": {
+          "complete": true,
+          "entries": [
+            {
+              "seq": 1,
+              "stepId": "9c1b4d0f2a7e5b3c8d6e1f0a2b3c4d5e",
+              "name": "payment",
+              "kind": "message",
+              "status": "waiting",
+              "attempt": 0,
+              "queueId": "0199a3d0-1111-7000-8000-00000000aaaa"
+            }
+          ]
+        },
         "deadline": "2026-10-09T12:05:00Z",
         "cancel": null
       }
@@ -442,6 +554,34 @@
             "timeoutMs": 5
           }
         ]
+      },
+      {
+        "type": "messageWaitCreated",
+        "stepId": "9c1b4d0f2a7e5b3c8d6e1f0a2b3c4d5e",
+        "name": "payment",
+        "queueId": "0199a3d0-1111-7000-8000-00000000aaaa",
+        "key": "order:o-1",
+        "timeoutMs": 86400000
+      },
+      {
+        "type": "messageWaitCreated",
+        "stepId": "w",
+        "name": "w",
+        "queueId": "0199a3d0-1111-7000-8000-00000000aaaa",
+        "key": "k",
+        "timeoutMs": 1000
+      },
+      {
+        "type": "messageWaitCreated",
+        "stepId": "w",
+        "name": "w",
+        "queueId": "0199a3d0-1111-7000-8000-00000000aaaa",
+        "key": "k",
+        "timeoutMs": 2592000000
+      },
+      {
+        "type": "waitForMessage",
+        "stepId": "9c1b4d0f2a7e5b3c8d6e1f0a2b3c4d5e"
       }
     ],
     "invalid": [
@@ -518,6 +658,70 @@
         "name": "s",
         "until": "1970-01-01T00:00:00Z",
         "token": "201.AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8"
+      },
+      {
+        "type": "messageWaitCreated",
+        "stepId": "w",
+        "name": "w",
+        "queueId": "0199a3d0-1111-7000-8000-00000000aaaa",
+        "timeoutMs": 60000
+      },
+      {
+        "type": "messageWaitCreated",
+        "stepId": "w",
+        "name": "w",
+        "queueId": "0199a3d0-1111-7000-8000-00000000aaaa",
+        "key": "has space",
+        "timeoutMs": 60000
+      },
+      {
+        "type": "messageWaitCreated",
+        "stepId": "w",
+        "name": "w",
+        "queueId": "0199a3d0-1111-7000-8000-00000000aaaa",
+        "key": "kkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkk",
+        "timeoutMs": 60000
+      },
+      {
+        "type": "messageWaitCreated",
+        "stepId": "w",
+        "name": "w",
+        "queueId": "0199a3d0-1111-7000-8000-00000000aaaa",
+        "key": "k",
+        "timeoutMs": 999
+      },
+      {
+        "type": "messageWaitCreated",
+        "stepId": "w",
+        "name": "w",
+        "queueId": "0199a3d0-1111-7000-8000-00000000aaaa",
+        "key": "k",
+        "timeoutMs": 2592000001
+      },
+      {
+        "type": "messageWaitCreated",
+        "stepId": "w",
+        "name": "w",
+        "queueId": "que_abc",
+        "key": "k",
+        "timeoutMs": 60000
+      },
+      {
+        "type": "messageWaitCreated",
+        "name": "w",
+        "queueId": "0199a3d0-1111-7000-8000-00000000aaaa",
+        "key": "k",
+        "timeoutMs": 60000
+      },
+      {
+        "type": "waitForMessage"
+      },
+      {
+        "type": "stepStarted",
+        "stepId": "s",
+        "name": "s",
+        "attempt": 1,
+        "key": "k"
       }
     ]
   },

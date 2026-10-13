@@ -53,7 +53,7 @@ from ._types import (
     WorkflowInfo,
 )
 
-PROTOCOL_VERSIONS = ["1.0", "1.1"]
+PROTOCOL_VERSIONS = ["1.0", "1.1", "1.2"]
 
 __all__ = [
     "DEFAULT_RETRY",

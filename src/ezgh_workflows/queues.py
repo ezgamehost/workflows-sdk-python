@@ -46,6 +46,19 @@ class SentMessages(TypedDict):
     messages: list[SentMessage]
 
 
+class ReceivedMessage(TypedDict):
+    """A queue message a wait received (step.wait_for_message, protocol 1.2). groupId and seq: FIFO
+    queues only."""
+
+    messageId: str
+    body: str
+    attributes: dict[str, str]
+    sentAt: str
+    queueId: str
+    groupId: NotRequired[str]
+    seq: NotRequired[str]
+
+
 class QueuesApiError(Exception):
     """An error answer from the Queues API: the HTTP status, the platform error code and
     Retry-After. Status 0 with code "network_error": every attempt failed in transit."""

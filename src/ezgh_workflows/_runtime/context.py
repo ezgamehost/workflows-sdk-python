@@ -13,6 +13,7 @@ from ..queues import (
     QueueMessage,
     QueuesApiError,
     QueuesClient,
+    ReceivedMessage,
     SentMessages,
     check_messages,
     send_to_queue_digest,
@@ -188,6 +189,15 @@ class Step(_StepInfo):
         (protocol 1.1)."""
         return self._ex.call_async(lambda: self._ex.register_invoke(name, workflow, input, id))
 
+    def wait_for_message(
+        self, name: str, *, queue_id: str, key: str, timeout_seconds: float, id: str | None = None
+    ) -> "asyncio.Future[ReceivedMessage | None]":
+        """Waits for a message on an EZGH queue (protocol 1.2): the queue's workflow subscription in
+        resume mode delivers each message whose correlation attribute equals key to every run waiting
+        on (queue_id, key). Returns the message, or None once timeout_seconds (1 to 2,592,000) pass
+        without one. queue_id is the queue's ID (a UUID, not its que_ slug)."""
+        return self._ex.call_async(lambda: self._ex.register_message(name, queue_id, key, timeout_seconds, id))
+
     def send_to_queue(
         self, name: str, client: QueuesClient, queue_id: str, messages: Sequence[QueueMessage]
     ) -> "asyncio.Future[SentMessages]":
@@ -240,6 +250,16 @@ class SyncStep(_StepInfo):
 
     def invoke(self, name: str, *, workflow: "str | Any", input: Any = None, id: str | None = None) -> Any:
         return self._ex.call_sync([lambda: self._ex.register_invoke(name, workflow, input, id)])[0]
+
+    def wait_for_message(
+        self, name: str, *, queue_id: str, key: str, timeout_seconds: float, id: str | None = None
+    ) -> ReceivedMessage | None:
+        """Step.wait_for_message, blocking."""
+        ex = self._ex
+        out: ReceivedMessage | None = ex.call_sync(
+            [lambda: ex.register_message(name, queue_id, key, timeout_seconds, id)]
+        )[0]
+        return out
 
     def send_to_queue(
         self, name: str, client: QueuesClient, queue_id: str, messages: Sequence[QueueMessage]

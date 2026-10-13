@@ -26,13 +26,17 @@ class JournalEntry(TypedDict):
     seq: int
     stepId: str
     name: str
-    kind: str  # run | sleep | value | callback | invoke (a later version may add more)
+    kind: str  # run | sleep | value | callback | invoke | message (a later version may add more)
     status: str  # running | retrying | completed | failed | cancelled | sleeping | waiting (or later)
     attempt: int
     output: NotRequired[JSONValue]
     outputRef: NotRequired[str]
     error: NotRequired[WireError]
     token: NotRequired[str]  # kind callback: the callback token
+    createdSeq: NotRequired[int]  # kind callback and message: where the creation committed
+    queueId: NotRequired[str]  # kind message (1.2): the queue waited on
+    key: NotRequired[str]  # kind message (1.2): the key waited for
+    timedOut: NotRequired[bool]  # kind message (1.2): the timeout passed before a message came
 
 
 class Journal(TypedDict):

@@ -79,7 +79,7 @@ async def test_sync_reply_lists_full_policies_and_versions() -> None:
         }
     ).encode()
     status, reply = await call(app(), body, signed(body))
-    assert status == 200 and reply["protocolVersions"] == ["1.0", "1.1"] and reply["maxInvocationSeconds"] == 60
+    assert status == 200 and reply["protocolVersions"] == ["1.0", "1.1", "1.2"] and reply["maxInvocationSeconds"] == 60
     assert reply["workflows"] == [
         {"name": "hello"},
         {

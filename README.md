@@ -5,10 +5,10 @@ as code, with steps, sleeps, retries, callbacks, child workflows, parallel steps
 
 - Python 3.12 and 3.13; no runtime dependencies (the standard library only).
 - Workflows are `async def` (with `Context`) or plain `def` (with `SyncContext`).
-- Speaks the EZGH Workflows protocol `1.0` and `1.1` (`ezgh_workflows.PROTOCOL_VERSIONS`).
+- Speaks the EZGH Workflows protocol `1.0`, `1.1` and `1.2` (`ezgh_workflows.PROTOCOL_VERSIONS`).
 
-**Status:** not yet published to PyPI. Verified end to end against workflows-stack `ec53771`
-(conformance: every push and pull scenario; the end-to-end suite: runs, retries, crashes, cancel,
+**Status:** not yet published to PyPI. Verified end to end against workflows-stack `0d280ce`
+(conformance: every push and pull scenario, protocol 1.2's message waits included; the end-to-end suite: runs, retries, crashes, cancel,
 callbacks, child workflows, parallel steps, schedules and a pull worker against `workflows-stack all`).
 
 ## Writing workflows
@@ -54,6 +54,7 @@ app = serve(workflows=[onboarding, nightly], signing_secrets=[os.environ.get("EZ
 | `now(name)`, `uuid(name)` | A recorded time (an aware UTC `datetime`) or UUID: the same on every replay. |
 | `create_callback(name, *, timeout="7d", id=None)` | A callback URL (`cb.url`, `cb.token`); `await cb.wait()` suspends until it's completed. |
 | `invoke(name, *, workflow, input=None, id=None)` | Runs a child workflow of the same app and returns its output, or raises `ChildFailedError`. |
+| `wait_for_message(name, *, queue_id, key, timeout_seconds, id=None)` | Waits for a queue message (protocol 1.2); returns it, or `None` on timeout (see [Waiting for a message](#waiting-for-a-message)). |
 | `send_to_queue(name, client, queue_id, messages)` | Sends 1–10 messages to an EZGH queue, once (see [Sending to a queue](#sending-to-a-queue)). |
 | `parallel((name, fn), ...)` | Sync workflows only: runs several steps at once. |
 
@@ -124,6 +125,31 @@ async def order(ctx: Context) -> None:
 Sync workflows call it the same way, without `await`. `queues.send(queue_id, messages,
 idempotency_key=None)` works outside workflows too (blocking; without a key, each call gets a random
 one, kept across its resends).
+
+### Waiting for a message
+
+`ctx.step.wait_for_message(name, *, queue_id, key, timeout_seconds)` suspends the run until a
+message for `key` arrives on an EZGH queue, and returns it, or `None` once `timeout_seconds` (1 to
+2,592,000, 30 days) pass without one. A timeout isn't an error.
+
+```python
+paid = await ctx.step.wait_for_message("paid", queue_id=QUEUE_ID, key=f"order:{order_id}", timeout_seconds=86_400)
+if paid is None:
+    return await ctx.step.run("cancel-order", lambda: shop.cancel(order_id))
+await ctx.step.run("ship", lambda: shop.ship(order_id, json.loads(paid["body"])))
+```
+
+- **Delivery.** The queue needs a subscription that targets the app's workflow in `resume` mode
+  with a `correlationAttribute` (say `orderId`). Each message whose attribute equals a wait's `key`
+  resumes every run waiting on that queue and key at that moment. A message nobody waits for is
+  retried with the subscription's backoff, then dead-lettered.
+- **The message** is a `ReceivedMessage` dict: `{"messageId", "body", "attributes", "sentAt",
+  "queueId", "groupId"?, "seq"?}`. It's recorded, so replays return the same one.
+- `queue_id` is the queue's ID (a UUID, not its `que_` slug); `key` matches
+  `^[A-Za-z0-9_.:-]{1,256}$`. Cancelling the run raises `RunCancelledError` from a pending wait.
+  Sync workflows call it without `await`.
+- Waits need a workflows-stack serving protocol 1.2; at 1.0 or 1.1 the run fails with
+  `NonRetriableError`.
 
 ### Tracing
 

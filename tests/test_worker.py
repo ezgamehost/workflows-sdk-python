@@ -123,7 +123,7 @@ async def test_worker_polls_runs_and_completes() -> None:
         "maxTasks": 3,
         "workerId": "w-1",
         "protocolVersions": ["1.0", "1.1", "1.2"],
-        "sdk": {"name": "ezgh-workflows", "version": "0.2.0"},
+        "sdk": {"name": "ezgh-workflows", "version": "0.3.0"},
         "workflows": [{"name": "pulled"}, {"name": "longstep"}],
     }
     assert host.polls[1]["workflows"] == host.polls[0]["workflows"]  # every poll announces

@@ -1,2 +1,2 @@
 SDK_NAME = "ezgh-workflows"
-SDK_VERSION = "0.2.0"
+SDK_VERSION = "0.3.0"

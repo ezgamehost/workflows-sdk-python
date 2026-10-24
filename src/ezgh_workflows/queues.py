@@ -13,6 +13,7 @@ from collections.abc import Mapping, Sequence
 from typing import Any, NotRequired, TypedDict
 
 from ._http import HttpError, request
+from ._instance import key_source
 from .protocol._codec import dumps_bytes
 
 _sleep = time.sleep
@@ -94,20 +95,6 @@ class QueuesApiError(Exception):
         return f"QueuesApiError({self.status}, {self.code!r}, {str(self)!r})"
 
 
-class _Secret:
-    """A credential that never prints."""
-
-    __slots__ = ("value",)
-
-    def __init__(self, value: str) -> None:
-        self.value = value
-
-    def __repr__(self) -> str:
-        return "<redacted>"
-
-    __str__ = __repr__
-
-
 def _retry_after(v: str | None) -> float | None:
     if not v:
         return None
@@ -153,12 +140,12 @@ class QueuesClient:
     resent up to retries times, after Retry-After (at most max_retry_delay seconds), always with
     the same Idempotency-Key."""
 
-    __slots__ = ("__weakref__", "_base", "_key", "_max_delay", "_retries", "_timeout")
+    __slots__ = ("__weakref__", "_base", "_cred", "_max_delay", "_retries", "_timeout")
 
     def __init__(
         self,
         *,
-        api_key: str,
+        api_key: str | None = None,
         organization_id: str,
         project_id: str,
         base_url: str = DEFAULT_QUEUES_BASE_URL,
@@ -166,8 +153,7 @@ class QueuesClient:
         max_retry_delay: float = 10.0,
         timeout: float = 30.0,
     ) -> None:
-        if not isinstance(api_key, str) or not api_key:
-            raise ValueError("api_key is required")
+        self._cred = key_source(api_key)
         for what, v in (("organization_id", organization_id), ("project_id", project_id)):
             if not isinstance(v, str) or not v:
                 raise ValueError(f"{what} is required")
@@ -178,7 +164,6 @@ class QueuesClient:
         if not isinstance(timeout, int | float) or not math.isfinite(timeout) or timeout <= 0:
             raise ValueError("timeout is a number of seconds > 0")
         org, prj = urllib.parse.quote(organization_id, safe=""), urllib.parse.quote(project_id, safe="")
-        self._key = _Secret(api_key)
         self._base = f"{base_url.rstrip('/')}/v1/organizations/{org}/projects/{prj}"
         self._retries, self._max_delay, self._timeout = retries, float(max_retry_delay), float(timeout)
 
@@ -198,7 +183,6 @@ class QueuesClient:
         if not _valid_key(key):
             raise ValueError("An idempotency_key is 1-200 printable ASCII characters")
         headers = {
-            "Authorization": f"Bearer {self._key.value}",
             "Accept": "application/json",
             "Content-Type": "application/json",
             "Idempotency-Key": key,
@@ -206,7 +190,10 @@ class QueuesClient:
         data = dumps_bytes({"messages": [dict(m) for m in messages]})
         url = f"{self._base}/queues/{urllib.parse.quote(queue_id, safe='')}/messages"
         attempt = 0
+        reauthed = False  # an instance key the API refused is replaced once per call
         while True:
+            key = self._cred.key()
+            headers["Authorization"] = f"Bearer {key}"
             try:
                 res = request("POST", url, headers, data, self._timeout)
             except HttpError as e:
@@ -227,6 +214,9 @@ class QueuesClient:
                 out: SentMessages = payload  # type: ignore[assignment]
                 return out
             err = _api_error(res.status, payload, res.headers.get("retry-after"))
+            if res.status == 401 and not reauthed and self._cred.refused(key):
+                reauthed = True
+                continue
             if not err.resendable() or attempt >= self._retries:
                 raise err
             ra = err.retry_after_seconds

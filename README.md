@@ -310,6 +310,16 @@ worker.run_sync()                           # or: await worker.run(); worker.sto
   `$LOGNAME`, the OS user) lowercased, each run of other characters made one `-`, at most 58
   characters (`dev-dev` if nothing is left).
 
+## On an EZGH compute instance
+
+Leave `api_key` out on an EZGH compute instance that has a Bot attached, and `Client`,
+`AsyncClient`, `QueuesClient` and `Worker` use the Bot's short-lived key from the instance's
+metadata service. It is fetched when needed, refreshed 5 minutes before it expires (kept until it
+really expires if the service is down or rate limited), and replaced once, with one retry, when the
+API answers 401. The Bot needs the actions the calls use, like any key. An explicit `api_key` always
+wins; off an instance a missing one is still a `ValueError`; with no Bot attached, calls raise
+`NoBotError`. Anything on the instance, containers included, can fetch the Bot's key.
+
 ## Client
 
 ```python

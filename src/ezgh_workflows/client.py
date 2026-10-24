@@ -13,25 +13,12 @@ import uuid
 from typing import Any, Literal, NotRequired, TypedDict
 
 from ._http import HttpError, request
+from ._instance import KeySource, key_source
 from .protocol._codec import dumps_bytes, encode_value
 
 _sleep = time.sleep
 _NO_BODY: Any = object()
 DEFAULT_BASE_URL = "https://workflows-api.ezghcloud.com"
-
-
-class _Secret:
-    """A credential that never prints."""
-
-    __slots__ = ("value",)
-
-    def __init__(self, value: str) -> None:
-        self.value = value
-
-    def __repr__(self) -> str:
-        return "<redacted>"
-
-    __str__ = __repr__
 
 
 class WorkflowsApiError(Exception):
@@ -241,28 +228,29 @@ class Client:
     """Calls the Workflows API for one project (blocking). Run calls take an API key or a
     workflows:runs SSO token; app and schedule management need an API key with those actions.
 
+    Without api_key, on an EZGH compute instance with a Bot attached, the Bot's short-lived key
+    from the metadata service is used (fetched when needed; a 401 fetches a new one and retries once).
+
     429, 503 and network errors are retried up to retries times (after Retry-After, at most
     max_retry_delay seconds); writes are resent with the same Idempotency-Key."""
 
-    __slots__ = ("__weakref__", "_base", "_key", "_max_delay", "_retries")
+    __slots__ = ("__weakref__", "_base", "_cred", "_max_delay", "_retries")
 
     def __init__(
         self,
         *,
-        api_key: str,
+        api_key: str | None = None,
         organization_id: str,
         project_id: str,
         base_url: str = DEFAULT_BASE_URL,
         retries: int = 3,
         max_retry_delay: float = 10.0,
     ) -> None:
-        if not isinstance(api_key, str) or not api_key:
-            raise ValueError("api_key is required")
+        self._cred: KeySource = key_source(api_key)
         if not isinstance(retries, int) or isinstance(retries, bool) or retries < 0:
             raise ValueError("retries is a whole number >= 0")
         if not isinstance(max_retry_delay, int | float) or not math.isfinite(max_retry_delay) or max_retry_delay < 0:
             raise ValueError("max_retry_delay is a number of seconds >= 0")
-        self._key = _Secret(api_key)
         self._base = f"{base_url.rstrip('/')}/v1/organizations/{_q(organization_id)}/projects/{_q(project_id)}"
         self._retries, self._max_delay = retries, float(max_retry_delay)
 
@@ -279,7 +267,7 @@ class Client:
         resend: bool = True,
         headers: dict[str, str] | None = None,
     ) -> Any:
-        h = {"Authorization": f"Bearer {self._key.value}", "Accept": "application/json", **(headers or {})}
+        h = {"Accept": "application/json", **(headers or {})}
         data = None
         if body is not _NO_BODY:  # JSON null is a body too
             h["Content-Type"] = "application/json"
@@ -287,7 +275,10 @@ class Client:
         if method != "GET":
             h["Idempotency-Key"] = idempotency_key or str(uuid.uuid4())
         attempt = 0
+        reauthed = False  # an instance key the API refused is replaced once per call
         while True:
+            key = self._cred.key()
+            h["Authorization"] = f"Bearer {key}"
             try:
                 res = request(method, self._base + path, h, data, 60.0)
             except HttpError as e:
@@ -311,6 +302,9 @@ class Client:
             if 200 <= res.status < 300:
                 return payload
             api_err = _api_error(res.status, payload, res.headers.get("retry-after"))
+            if res.status == 401 and not reauthed and self._cred.refused(key):
+                reauthed = True
+                continue
             if not resend and res.status >= 500:
                 # The server may have done it before failing: a resend would replay it without the
                 # secret, so the outcome is unknown.
@@ -523,7 +517,7 @@ class AsyncClient:
     def __init__(
         self,
         *,
-        api_key: str,
+        api_key: str | None = None,
         organization_id: str,
         project_id: str,
         base_url: str = DEFAULT_BASE_URL,

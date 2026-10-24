@@ -194,7 +194,7 @@ def test_bad_arguments_are_refused_before_sending(fake: FakeQueues) -> None:
 
 def test_the_api_key_never_prints(fake: FakeQueues) -> None:
     c = client(fake)
-    assert KEY not in repr(c) and KEY not in str(c) and KEY not in repr(c._key)
+    assert KEY not in repr(c) and KEY not in str(c) and KEY not in repr(c._cred)
 
 
 # The key derivation vector, the same in every EZGH Workflows SDK.

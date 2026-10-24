@@ -26,13 +26,14 @@ from typing import Any
 
 from ._env import clean_deployment, detect_deployment
 from ._http import AbortableRequest, HttpError, Response, request
+from ._instance import InstanceCredentialsError, key_source
 from ._runtime.execution import MAX_PULL_RESULT_BYTES, execute
 from ._runtime.invocation import InvalidInvocation, parse_invocation, parse_time
 from ._runtime.live import CheckpointFailed, HttpLive, InvocationSuperseded, retry_after_seconds
 from ._runtime.threads import run_in_thread
 from ._runtime.workflow import Workflow, definition_of, workflow_info
 from ._version import SDK_NAME, SDK_VERSION
-from .client import DEFAULT_BASE_URL, Client, WorkflowsApiError, _Secret
+from .client import DEFAULT_BASE_URL, Client, WorkflowsApiError
 from .protocol import PROTOCOL_VERSIONS
 from .protocol._codec import dumps_bytes
 from .protocol._ids import QUEUE_NAME, WORKER_ID, is_uuid
@@ -84,7 +85,7 @@ class Worker:
     def __init__(
         self,
         *,
-        api_key: str,
+        api_key: str | None = None,
         organization_id: str,
         project_id: str,
         app: str,
@@ -103,8 +104,8 @@ class Worker:
         api_base_url: str | None = None,
         on_error: Callable[[BaseException, str], None] | None = None,
     ) -> None:
-        if not isinstance(api_key, str) or not api_key:
-            raise ValueError("api_key is required")
+        self._cred = key_source(api_key)  # never in repr()
+        self._reauthed = False  # an instance key the API refused is replaced once
         if not is_uuid(app):
             raise ValueError(f"app is the pull app's ID (a lowercase UUID); got {app!r}")
         if not isinstance(queue, str) or not QUEUE_NAME.fullmatch(queue):
@@ -136,7 +137,6 @@ class Worker:
             if d.name in self._by_name:
                 raise ValueError(f'Two workflows are named "{d.name}"')
             self._by_name[d.name] = wf
-        self._key = _Secret(api_key)  # never in repr()
         org, prj = urllib.parse.quote(organization_id, safe=""), urllib.parse.quote(project_id, safe="")
         self._poll_url = f"{live_url.rstrip('/')}/v1/organizations/{org}/projects/{prj}/workers/poll"
         self._app, self._queue, self._max_tasks, self._concurrency = app, queue, max_tasks, concurrency
@@ -164,7 +164,7 @@ class Worker:
     def dev(
         cls,
         *,
-        api_key: str,
+        api_key: str | None = None,
         organization_id: str,
         project_id: str,
         workflows: list[Workflow],
@@ -277,14 +277,17 @@ class Worker:
                 stop.cancel()
                 continue
             body = dumps_bytes(self._poll_body(min(self._max_tasks, free)))
-            headers = {"Authorization": f"Bearer {self._key.value}", "Content-Type": "application/json"}
             # A daemon thread whose socket stop() shuts down: a poll the live host holds never
-            # delays stop() or process exit.
+            # delays stop() or process exit. It also fetches the key: an instance's can block.
             req = AbortableRequest()
-            poll = run_in_thread(
-                functools.partial(req.request, "POST", self._poll_url, headers, body, POLL_TIMEOUT),
-                "ezgh-workflows-poll",
-            )
+            used: list[str] = []
+
+            def do_poll(req: AbortableRequest = req, body: bytes = body, used: list[str] = used) -> Response:
+                used.append(self._cred.key())
+                headers = {"Authorization": f"Bearer {used[0]}", "Content-Type": "application/json"}
+                return req.request("POST", self._poll_url, headers, body, POLL_TIMEOUT)
+
+            poll = run_in_thread(do_poll, "ezgh-workflows-poll")
             stop = asyncio.ensure_future(self._stopping.wait())
             await asyncio.wait({poll, stop}, return_when=asyncio.FIRST_COMPLETED)
             stop.cancel()
@@ -300,12 +303,15 @@ class Worker:
             received = time.time()
             try:
                 res: Response = poll.result()
-            except HttpError as e:
+            except (HttpError, InstanceCredentialsError) as e:
                 if self._stopping.is_set():
                     return
                 self._error(e, "poll")
                 await self._backoff(delay, None)
                 delay = min(self._backoff_max, delay * 2)
+                continue
+            if res.status == 401 and not self._reauthed and used and self._cred.refused(used[0]):
+                self._reauthed = True  # an instance key was replaced: poll again once
                 continue
             if res.status in (401, 403):
                 raise _unauthorized(res.status)  # the key or its permissions: fatal, as in every SDK
@@ -317,6 +323,7 @@ class Worker:
             if res.status >= 400 or res.status < 200 or res.status >= 300:
                 # 1xx, 3xx (the worker follows no redirects) and other 4xx: misconfigured, not transient.
                 raise WorkflowsApiError(res.status, _code(res), f"workflows-live refused the poll (HTTP {res.status})")
+            self._reauthed = False
             if res.status == 204:
                 delay = 0.5
                 continue

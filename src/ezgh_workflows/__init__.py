@@ -1,5 +1,6 @@
 """EZGH Workflows: durable workflows written as code (https://docs.ezghcloud.com/workflows)."""
 
+from ._instance import InstanceCredentialsError, NoBotError
 from ._runtime.context import Callback, Context, RunMeta, ScheduleMeta, SyncCallback, SyncContext
 from ._runtime.errors import (
     CallbackTimeoutError,
@@ -26,6 +27,8 @@ __all__ = [
     "ChildFailedError",
     "Client",
     "Context",
+    "InstanceCredentialsError",
+    "NoBotError",
     "NonRetriableError",
     "QueueMessage",
     "QueuesApiError",

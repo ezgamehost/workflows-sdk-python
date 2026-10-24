@@ -234,7 +234,7 @@ def test_options_are_checked() -> None:
         with pytest.raises(ValueError):
             Worker(**{**base, **bad})
     w = Worker(**{**base, "api_key": "ezgh_live_8f3k2m9q7x1v5b6n4c0z2a8s"})
-    assert "ezgh_live_8f3k2m9q7x1v5b6n4c0z2a8s" not in repr(w) + str(vars(w)) + repr(w._key)
+    assert "ezgh_live_8f3k2m9q7x1v5b6n4c0z2a8s" not in repr(w) + str(vars(w)) + repr(w._cred)
     with pytest.raises(ValueError):
         Worker(**{**base, "heartbeat_interval": 45})
     import re

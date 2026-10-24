@@ -84,7 +84,7 @@ def test_the_api_key_never_prints() -> None:
     assert "ezgh_secret" not in repr(c) and "ezgh_secret" not in repr(
         AsyncClient(api_key="ezgh_secret", organization_id="o", project_id="p")
     )
-    assert "ezgh_secret" not in repr(c._key) and "ezgh_secret" not in str(c._key)
+    assert "ezgh_secret" not in repr(c._cred) and "ezgh_secret" not in str(c._cred)
 
 
 def test_paths_are_escaped(rec: Recorder) -> None:

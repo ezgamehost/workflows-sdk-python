@@ -22,6 +22,7 @@ class Fake:
         self.keys = [KEY1]
         self.status = 0
         self.retry_after = ""
+        self.not_found = False
         self.ttl = 600.0
         self.refused: set[str] = set()
         self.api_auth: list[str] = []
@@ -38,7 +39,9 @@ class Fake:
             if headers.get("EZGH-Metadata-Token") != self.token:
                 return http.Response(401, {}, b'{"error":{"code":"invalid_token"}}')
             if self.status:
-                return http.Response(self.status, {"retry-after": self.retry_after} if self.retry_after else {}, b"")
+                code = "not_found" if self.not_found else "no_bot"
+                h = {"retry-after": self.retry_after} if self.retry_after else {}
+                return http.Response(self.status, h, json.dumps({"error": {"code": code}}).encode())
             k = self.keys.pop(0) if len(self.keys) > 1 else self.keys[0]
             exp = datetime.fromtimestamp(self.now + self.ttl, UTC).isoformat().replace("+00:00", "Z")
             return http.Response(200, {}, json.dumps({"apiKey": k, "expiresAt": exp, "bot": "bot_abc"}).encode())
@@ -95,6 +98,18 @@ def test_rate_limited_keeps_the_key_and_backs_off(fake: Fake) -> None:
     n = fake.gets
     fake.now += 60  # inside Retry-After: no new request
     assert p.key() == KEY1 and fake.gets == n
+
+
+def test_not_found_is_transient(fake: Fake) -> None:
+    p = inst.InstanceKey(now=lambda: fake.now)
+    assert p.key() == KEY1
+    fake.status, fake.not_found = 404, True
+    fake.now += 6 * 60
+    assert p.key() == KEY1
+    fake.now += 5 * 60  # expired
+    with pytest.raises(inst.InstanceCredentialsError) as e:
+        p.key()
+    assert not isinstance(e.value, NoBotError)
 
 
 def test_api_401_refetches_once(fake: Fake) -> None:

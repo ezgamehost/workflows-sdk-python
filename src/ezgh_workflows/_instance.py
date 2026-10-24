@@ -108,8 +108,8 @@ class InstanceKey(KeySource):
             if res.status == 401 and attempt == 0:
                 self._token = ""  # the token is gone (migration, metadata restart): get one new one
                 continue
-            if res.status == 404:
-                raise NoBotError
+            if res.status == 404 and _error_code(res.body) == "no_bot":
+                raise NoBotError  # any other 404 (not_found: mid-migration) is transient, like a 503
             if res.status != 200:
                 try:
                     self._retry_after = max(0.0, float(res.headers.get("retry-after", "0")))
@@ -139,6 +139,13 @@ class InstanceKey(KeySource):
             return request(method, METADATA_URL + path, {"EZGH-Metadata": "true", **headers}, None, timeout)
         except HttpError as e:
             raise InstanceCredentialsError(f"Instance metadata unreachable ({e.reason})") from None
+
+
+def _error_code(body: bytes) -> str:
+    try:
+        return str(json.loads(body)["error"]["code"])
+    except (ValueError, KeyError, TypeError):
+        return ""
 
 
 def key_source(api_key: object) -> KeySource:

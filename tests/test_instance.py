@@ -139,3 +139,27 @@ def test_explicit_key_wins_and_off_instance_is_an_error(fake: Fake, monkeypatch:
     with pytest.raises(ValueError, match="api_key is required"):
         Client(organization_id="o", project_id="p")
     assert (fake.puts, fake.gets) == (0, 0)
+
+
+def test_no_key_backs_off(fake: Fake) -> None:
+    fake.status, fake.retry_after = 429, "120"
+    p = inst.InstanceKey(now=lambda: fake.now)
+    with pytest.raises(inst.InstanceCredentialsError):
+        p.key()
+    n = fake.gets
+    fake.now += 30  # inside Retry-After: nothing is sent, the error is returned
+    with pytest.raises(inst.InstanceCredentialsError):
+        p.key()
+    assert fake.gets == n
+    fake.status = 0
+    fake.now += 91
+    assert p.key() == KEY1
+    # no_bot backs off too, but an API 401 (refused) refetches at once.
+    fake.status, fake.not_found = 404, False
+    p.refused(KEY1)
+    with pytest.raises(NoBotError):
+        p.key()
+    n = fake.gets
+    with pytest.raises(NoBotError):
+        p.key()
+    assert fake.gets == n

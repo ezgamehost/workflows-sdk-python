@@ -68,6 +68,7 @@ class InstanceKey(KeySource):
         self._lock = threading.Lock()
         self._token, self._token_exp = "", 0.0
         self._key, self._expires, self._next_try = "", 0.0, 0.0
+        self._last_err: Exception | None = None
         self._retry_after = 0.0  # the metadata service's Retry-After (503, 429) on the last failure
 
     def __repr__(self) -> str:
@@ -79,19 +80,22 @@ class InstanceKey(KeySource):
             if self._key and now + _REFRESH_AHEAD < self._expires:
                 return self._key
             err: Exception | None = None
-            if not self._key or now >= self._next_try:
+            if now >= self._next_try:
                 try:
                     return self._fetch()
                 except InstanceCredentialsError as e:
-                    err = e
+                    err = self._last_err = e
                     self._next_try = now + max(_RETRY_AFTER, self._retry_after)
                     if isinstance(e, NoBotError):
                         self._key = ""
             # A failed fetch keeps the old key until it actually expires.
             if self._key and now < self._expires:
                 return self._key
-            raise err or InstanceCredentialsError(
-                "Instance credentials expired and the metadata service is not answering"
+            # Backing off: report the failure that started it, without asking again.
+            raise (
+                err
+                or self._last_err
+                or InstanceCredentialsError("Instance credentials expired and the metadata service is not answering")
             )
 
     def refused(self, key: str) -> bool:

@@ -9,7 +9,9 @@ from datetime import datetime
 
 from ._http import HttpError, Response, request
 
-METADATA_URL = "http://169.254.169.254"
+# IPv4 first, then IPv6, which an IPv6-only instance only has (there the IPv4 connect fails at
+# once, network unreachable).
+METADATA_URLS = ("http://169.254.169.254", "http://[fd65:7a67:6800::254]")
 PRODUCT_NAME_PATH = "/sys/class/dmi/id/product_name"  # tests point these two elsewhere
 _PRODUCT = "EZGH Compute"
 _REFRESH_AHEAD = 5 * 60.0
@@ -70,6 +72,7 @@ class InstanceKey(KeySource):
         self._key, self._expires, self._next_try = "", 0.0, 0.0
         self._last_err: Exception | None = None
         self._retry_after = 0.0  # the metadata service's Retry-After (503, 429) on the last failure
+        self._at = 0  # index in METADATA_URLS of the address that last answered
 
     def __repr__(self) -> str:
         return "<ezgh_workflows instance credentials>"
@@ -139,10 +142,18 @@ class InstanceKey(KeySource):
         self._token, self._token_exp = token, self._now() + _TOKEN_TTL - _REFRESH_AHEAD
 
     def _call(self, method: str, path: str, headers: dict[str, str], timeout: float) -> Response:
-        try:
-            return request(method, METADATA_URL + path, {"EZGH-Metadata": "true", **headers}, None, timeout)
-        except HttpError as e:
-            raise InstanceCredentialsError(f"Instance metadata unreachable ({e.reason})") from None
+        # Each address, from the one that last answered; any HTTP answer is final.
+        reasons = []
+        for i in range(len(METADATA_URLS)):
+            at = (self._at + i) % len(METADATA_URLS)
+            try:
+                res = request(method, METADATA_URLS[at] + path, {"EZGH-Metadata": "true", **headers}, None, timeout)
+            except HttpError as e:
+                reasons.append(e.reason)
+                continue
+            self._at = at
+            return res
+        raise InstanceCredentialsError(f"Instance metadata unreachable ({', '.join(reasons)})")
 
 
 def _error_code(body: bytes) -> str:

@@ -30,7 +30,7 @@ class Fake:
     def __call__(
         self, method: str, url: str, headers: dict[str, str], body: bytes | None, timeout: float
     ) -> http.Response:
-        if url.startswith(inst.METADATA_URL):
+        if url.startswith(inst.METADATA_URLS):
             if url.endswith("/token"):
                 self.puts += 1
                 self.token = f"tok{self.puts}"
@@ -163,3 +163,21 @@ def test_no_key_backs_off(fake: Fake) -> None:
     with pytest.raises(NoBotError):
         p.key()
     assert fake.gets == n
+
+
+def test_unreachable_address_falls_through(fake: Fake, monkeypatch: pytest.MonkeyPatch) -> None:
+    """An IPv6-only instance can't reach 169.254.169.254: the next address answers and is kept."""
+    tried: list[str] = []
+
+    def v4_unreachable(
+        method: str, url: str, headers: dict[str, str], body: bytes | None, timeout: float
+    ) -> http.Response:
+        tried.append(url)
+        if url.startswith(inst.METADATA_URLS[0]):
+            raise http.HttpError("URLError")
+        return fake(method, url, headers, body, timeout)
+
+    monkeypatch.setattr("ezgh_workflows._instance.request", v4_unreachable)
+    assert inst.InstanceKey(now=lambda: fake.now).key() == KEY1
+    v4, v6 = inst.METADATA_URLS
+    assert tried == [v4 + "/ezgh/v1/token", v6 + "/ezgh/v1/token", v6 + "/ezgh/v1/credentials"]

@@ -228,8 +228,9 @@ class Client:
     """Calls the Workflows API for one project (blocking). Run calls take an API key or a
     workflows:runs SSO token; app and schedule management need an API key with those actions.
 
-    Without api_key, on an EZGH compute instance with a Bot attached, the Bot's short-lived key
-    from the metadata service is used (fetched when needed; a 401 fetches a new one and retries once).
+    Without api_key, in an EZGH Kubernetes pod with pod identity or on an EZGH compute instance with
+    a Bot attached, the Bot's short-lived key from the pod identity agent or the metadata service is
+    used (fetched when needed; a 401 fetches a new one and retries once).
 
     429, 503 and network errors are retried up to retries times (after Retry-After, at most
     max_retry_delay seconds); writes are resent with the same Idempotency-Key."""

@@ -320,6 +320,18 @@ API answers 401. The Bot needs the actions the calls use, like any key. An expli
 wins; off an instance a missing one is still a `ValueError`; with no Bot attached, calls raise
 `NoBotError`. Anything on the instance, containers included, can fetch the Bot's key.
 
+### In an EZGH Kubernetes pod
+
+**[built, waiting for EZGH Kubernetes to launch]** With `api_key` left out, a pod whose service
+account has a pod identity association uses its Bot's short-lived key from the node's pod identity
+agent, ahead of instance credentials. EZGH Kubernetes injects `EZGH_CONTAINER_CREDENTIALS_FULL_URI`
+and `EZGH_CONTAINER_AUTHORIZATION_TOKEN_FILE`; the SDK `GET`s the URI with the token file's contents
+(read afresh each time, as kubelet rotates it) as a bearer token, directly (no proxy, 1 s connect
+timeout), and refreshes and retries on 401 as above. The URI must be `http` to `169.254.170.23`,
+`[fd65:7a67:6800::23]` or a loopback address, or no request is made. Once the URI is set, a bad URI
+or an unreadable token file raises `ContainerCredentialsError` (an `InstanceCredentialsError`), never
+a fall-back to the node's instance credentials.
+
 ## Client
 
 ```python

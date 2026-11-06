@@ -164,9 +164,15 @@ def _error_code(body: bytes) -> str:
 
 
 def key_source(api_key: object) -> KeySource:
-    """The API key if given, else the instance's credentials on an instance, else ValueError."""
+    """The API key if given, else the container's credentials when EZGH_CONTAINER_CREDENTIALS_FULL_URI
+    is set (never falling through to the instance: a bad URI or token file fails at the first
+    request), else the instance's credentials on an instance, else ValueError."""
     if isinstance(api_key, str) and api_key:
         return StaticKey(api_key)
+    from ._container import ContainerKey, container_env  # imports this module
+
+    if (api_key is None or api_key == "") and (c := container_env()):
+        return ContainerKey(*c)
     if (api_key is None or api_key == "") and on_instance():
         return InstanceKey()
     raise ValueError("api_key is required")

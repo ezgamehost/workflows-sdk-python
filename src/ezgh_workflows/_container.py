@@ -13,7 +13,7 @@ from collections.abc import Callable
 from datetime import datetime
 
 from ._http import Response
-from ._instance import _REFRESH_AHEAD, _RETRY_AFTER, InstanceCredentialsError, KeySource, _error_code
+from ._instance import _REFRESH_AHEAD, _RETRY_AFTER, InstanceCredentialsError, KeySource, _error_code, _retry_after
 
 # The variables EZGH Kubernetes injects into such a pod.
 URI_ENV = "EZGH_CONTAINER_CREDENTIALS_FULL_URI"
@@ -55,6 +55,8 @@ def _get(uri: str, token: str) -> Response:
         return Response(r.status, {k.lower(): v for k, v in r.getheaders()}, r.read(1 << 16))
     except (OSError, http.client.HTTPException) as e:
         raise ContainerCredentialsError(f"Pod identity agent unreachable ({type(e).__name__})") from None
+    except ValueError:  # http.client refuses a header with a line break or outside Latin-1
+        raise ContainerCredentialsError(f"The service account token ({TOKEN_FILE_ENV}) isn't a valid header") from None
     finally:
         conn.close()
 
@@ -83,6 +85,7 @@ class ContainerKey(KeySource):
                 try:
                     return self._fetch()
                 except ContainerCredentialsError as e:
+                    now = self._now()  # the fetch may have taken seconds
                     err = self._last_err = e
                     self._next_try = now + max(_RETRY_AFTER, self._retry_after)
             # A failed fetch keeps the old key until it actually expires.
@@ -102,6 +105,7 @@ class ContainerKey(KeySource):
         return True
 
     def _fetch(self) -> str:
+        self._retry_after = 0.0
         check_container_uri(self._uri)
         if not self._token_file:
             raise ContainerCredentialsError(f"{URI_ENV} is set but {TOKEN_FILE_ENV} is not")
@@ -114,10 +118,7 @@ class ContainerKey(KeySource):
         if not token:
             raise ContainerCredentialsError(f"The pod's service account token ({TOKEN_FILE_ENV}) is empty")
         res = _get(self._uri, token)
-        try:
-            self._retry_after = max(0.0, float(res.headers.get("retry-after", "0")))
-        except ValueError:
-            self._retry_after = 0.0
+        self._retry_after = _retry_after(res)
         if res.status != 200:
             code = _error_code(res.body)
             raise ContainerCredentialsError(f"Pod identity agent answered {res.status}{f' ({code})' if code else ''}")

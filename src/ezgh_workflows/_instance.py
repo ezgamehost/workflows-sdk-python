@@ -2,6 +2,7 @@
 key uses the Bot's short-lived key from the instance's metadata service."""
 
 import json
+import math
 import threading
 import time
 from collections.abc import Callable
@@ -17,6 +18,7 @@ _PRODUCT = "EZGH Compute"
 _REFRESH_AHEAD = 5 * 60.0
 _TOKEN_TTL = 6 * 3600
 _RETRY_AFTER = 5.0
+_MAX_RETRY_AFTER = 300.0
 
 
 class InstanceCredentialsError(Exception):
@@ -87,6 +89,7 @@ class InstanceKey(KeySource):
                 try:
                     return self._fetch()
                 except InstanceCredentialsError as e:
+                    now = self._now()  # the fetch may have taken seconds
                     err = self._last_err = e
                     self._next_try = now + max(_RETRY_AFTER, self._retry_after)
                     if isinstance(e, NoBotError):
@@ -108,6 +111,7 @@ class InstanceKey(KeySource):
         return True
 
     def _fetch(self) -> str:
+        self._retry_after = 0.0
         for attempt in range(2):
             if not self._token or self._now() >= self._token_exp:
                 self._new_token()
@@ -118,10 +122,7 @@ class InstanceKey(KeySource):
             if res.status == 404 and _error_code(res.body) == "no_bot":
                 raise NoBotError  # any other 404 (not_found: mid-migration) is transient, like a 503
             if res.status != 200:
-                try:
-                    self._retry_after = max(0.0, float(res.headers.get("retry-after", "0")))
-                except ValueError:
-                    self._retry_after = 0.0
+                self._retry_after = _retry_after(res)
                 raise InstanceCredentialsError(f"Instance metadata answered {res.status}")
             try:
                 c = json.loads(res.body)
@@ -154,6 +155,15 @@ class InstanceKey(KeySource):
             self._at = at
             return res
         raise InstanceCredentialsError(f"Instance metadata unreachable ({', '.join(reasons)})")
+
+
+def _retry_after(res: Response) -> float:
+    """The answer's Retry-After in seconds, at most 5 minutes; 0 when absent or unreadable."""
+    try:
+        ra = float(res.headers.get("retry-after", "0"))
+    except ValueError:
+        return 0.0
+    return min(ra, _MAX_RETRY_AFTER) if math.isfinite(ra) and ra > 0 else 0.0
 
 
 def _error_code(body: bytes) -> str:

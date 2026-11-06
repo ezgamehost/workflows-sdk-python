@@ -1,6 +1,6 @@
 import json
 import threading
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from datetime import UTC, datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -26,6 +26,7 @@ class Agent:
         self.keys = [POD_KEY]  # handed out in order, the last repeated
         self.status = 0
         self.retry_after = ""
+        self.during: Callable[[], None] = lambda: None  # runs while the agent answers: a slow fetch
         self.refused: set[str] = set()
         self.api_auth: list[str] = []
         agent = self
@@ -39,6 +40,7 @@ class Agent:
                         return self._send(401, {}, b'{"error":{"code":"unauthorized","message":"no"}}')
                     return self._send(200, {}, b'{"id":"run_1"}')
                 agent.gets += 1
+                agent.during()
                 agent.tokens.append(auth.removeprefix("Bearer "))
                 if agent.status:
                     h = {"Retry-After": agent.retry_after} if agent.retry_after else {}
@@ -130,6 +132,50 @@ def test_a_failed_fetch_keeps_the_key_until_expiry(agent: Agent, tmp_path: Path)
     agent.now += 4 * 60  # expired
     with pytest.raises(ContainerCredentialsError, match="answered 503"):
         p.key()
+
+
+def test_a_slow_failed_fetch_reads_the_clock_again(agent: Agent, tmp_path: Path) -> None:
+    p = ctr.ContainerKey(agent.uri, token_file(tmp_path, "sa"), now=lambda: agent.now)
+    assert p.key() == POD_KEY
+    agent.now += 6 * 60  # refresh due; the key lives 4 more minutes
+    agent.status = 503
+
+    def slow() -> None:
+        agent.now += 5 * 60  # the fetch outlives the key
+
+    agent.during = slow
+    with pytest.raises(ContainerCredentialsError, match="answered 503"):
+        p.key()
+    agent.during = lambda: None
+    n = agent.gets
+    agent.now += 4  # within 5 s of the fetch's end: nothing is asked
+    with pytest.raises(ContainerCredentialsError, match="answered 503"):
+        p.key()
+    assert agent.gets == n
+
+
+@pytest.mark.parametrize("retry_after", ["100000", "inf"])
+def test_retry_after_is_capped_and_lasts_only_for_its_answer(agent: Agent, tmp_path: Path, retry_after: str) -> None:
+    file = token_file(tmp_path, "sa")
+    p = ctr.ContainerKey(agent.uri, file, now=lambda: agent.now)
+    agent.status, agent.retry_after = 503, retry_after
+    with pytest.raises(ContainerCredentialsError, match="answered 503"):
+        p.key()
+    agent.now += 301
+    Path(file).unlink()  # fails with no answer from the agent: the default 5 s backoff
+    with pytest.raises(ContainerCredentialsError, match=ctr.TOKEN_FILE_ENV):
+        p.key()
+    Path(file).write_text("sa\n")
+    agent.status = 0
+    agent.now += 6
+    assert p.key() == POD_KEY
+
+
+@pytest.mark.parametrize("token", ["sa\nX-Evil: 1", "s\u00e4\u20ac"])
+def test_a_token_that_cant_be_a_header_is_a_credentials_error(agent: Agent, tmp_path: Path, token: str) -> None:
+    with pytest.raises(ContainerCredentialsError, match="isn't a valid header"):
+        ctr.ContainerKey(agent.uri, token_file(tmp_path, token)).key()
+    assert agent.gets == 0
 
 
 def test_a_401_refetches_once(agent: Agent, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:

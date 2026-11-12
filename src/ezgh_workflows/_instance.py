@@ -13,8 +13,10 @@ from ._http import HttpError, Response, request
 # IPv4 first, then IPv6, which an IPv6-only instance only has (there the IPv4 connect fails at
 # once, network unreachable).
 METADATA_URLS = ("http://169.254.169.254", "http://[fd65:7a67:6800::254]")
-PRODUCT_NAME_PATH = "/sys/class/dmi/id/product_name"  # tests point these two elsewhere
+PRODUCT_NAME_PATH = "/sys/class/dmi/id/product_name"  # tests point these three elsewhere
 _PRODUCT = "EZGH Compute"
+CMDLINE_PATH = "/proc/cmdline"
+_SANDBOX_ARG = "ezgh.product=sandbox"
 _REFRESH_AHEAD = 5 * 60.0
 _TOKEN_TTL = 6 * 3600
 _RETRY_AFTER = 5.0
@@ -33,10 +35,18 @@ class NoBotError(InstanceCredentialsError):
 
 
 def on_instance() -> bool:
-    """This machine is an EZGH compute instance (SMBIOS product name). No network."""
+    """This machine is an EZGH compute instance (SMBIOS product name) or an EZGH sandbox
+    (ezgh.product=sandbox among the kernel's boot arguments), which serves its Bot's keys at the same
+    endpoint. No network."""
     try:
         with open(PRODUCT_NAME_PATH, encoding="utf-8") as f:
-            return f.read().strip() == _PRODUCT
+            if f.read().strip() == _PRODUCT:
+                return True
+    except (OSError, UnicodeDecodeError):
+        pass
+    try:
+        with open(CMDLINE_PATH, encoding="utf-8") as f:
+            return _SANDBOX_ARG in f.read().split()
     except (OSError, UnicodeDecodeError):
         return False
 

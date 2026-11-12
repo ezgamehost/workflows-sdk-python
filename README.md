@@ -320,6 +320,9 @@ API answers 401. The Bot needs the actions the calls use, like any key. An expli
 wins; off an instance a missing one is still a `ValueError`; with no Bot attached, calls raise
 `NoBotError`. Anything on the instance, containers included, can fetch the Bot's key.
 
+The same holds in an EZGH sandbox created with a Bot: the clients use the Bot's key from the same
+endpoint. Any code in the sandbox can fetch it.
+
 ### In an EZGH Kubernetes pod
 
 **[built, waiting for EZGH Kubernetes to launch]** With `api_key` left out, a pod whose service

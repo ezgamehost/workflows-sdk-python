@@ -136,9 +136,28 @@ def test_explicit_key_wins_and_off_instance_is_an_error(fake: Fake, monkeypatch:
     Client(api_key="ezgh_explicit", organization_id="o", project_id="p").get("r")
     assert fake.api_auth == ["Bearer ezgh_explicit"] and (fake.puts, fake.gets) == (0, 0)
     monkeypatch.setattr(inst, "PRODUCT_NAME_PATH", "/nonexistent")
+    monkeypatch.setattr(inst, "CMDLINE_PATH", "/nonexistent")
     with pytest.raises(ValueError, match="api_key is required"):
         Client(organization_id="o", project_id="p")
     assert (fake.puts, fake.gets) == (0, 0)
+
+
+def test_a_sandbox_is_known_by_its_boot_arguments(fake: Fake, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    cmdline = tmp_path / "cmdline"
+    monkeypatch.setattr(inst, "PRODUCT_NAME_PATH", "/nonexistent")
+    monkeypatch.setattr(inst, "CMDLINE_PATH", str(cmdline))
+    for line in (
+        "console=ttyS0 ezgh.product=sandboxes\n",
+        "console=ttyS0 xezgh.product=sandbox\n",
+        "BOOT_IMAGE=/vmlinuz ro\n",
+    ):
+        cmdline.write_text(line)
+        with pytest.raises(ValueError, match="api_key is required"):
+            Client(organization_id="o", project_id="p")
+    assert (fake.puts, fake.gets) == (0, 0)
+    cmdline.write_text("console=ttyS0 reboot=k ezgh.product=sandbox\n")
+    Client(organization_id="o", project_id="p", base_url="http://api.test").get("run_1")
+    assert fake.api_auth == [f"Bearer {KEY1}"]
 
 
 def test_no_key_backs_off(fake: Fake) -> None:

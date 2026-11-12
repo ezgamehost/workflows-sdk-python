@@ -19,6 +19,11 @@ _SHARD_HEX = re.compile(r"[0-9a-f]{3}")
 SHARDS = 1024
 
 
+def is_app_id(s: object) -> bool:
+    """An app's ID as requests take it: its UUID or its prefixed ID (wfa_…)."""
+    return is_uuid(s) or (isinstance(s, str) and re.fullmatch(r"wfa_[a-z0-9]{12}", s) is not None)
+
+
 def is_uuid(s: object) -> bool:
     return isinstance(s, str) and _UUID.fullmatch(s) is not None
 

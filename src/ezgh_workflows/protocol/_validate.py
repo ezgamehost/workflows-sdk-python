@@ -5,7 +5,7 @@ from collections.abc import Mapping
 from typing import Any
 
 from ._bytes import utf8_len
-from ._ids import QUEUE_NAME, WORKER_ID, WORKFLOW_NAME, is_uuid
+from ._ids import QUEUE_NAME, WORKER_ID, WORKFLOW_NAME, is_app_id
 
 MAX_POLL_TASKS = 10
 MAX_WORKFLOWS = 1000
@@ -70,7 +70,7 @@ def check_workflows(ws: Any) -> None:
 def check_poll_request(r: Mapping[str, Any]) -> None:
     """PollRequest.Validate: what the live host's poll endpoint refuses, as ValueError."""
     t = r.get("maxTasks")
-    if not is_uuid(r.get("app")):
+    if not is_app_id(r.get("app")):
         raise ValueError(f"app {r.get('app')!r} isn't an app ID")
     if not isinstance(r.get("queue"), str) or not QUEUE_NAME.fullmatch(r["queue"]):
         raise ValueError(f"queue {r.get('queue')!r} doesn't match ^[a-z0-9][a-z0-9-]{{0,62}}$")

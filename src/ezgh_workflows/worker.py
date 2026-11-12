@@ -36,7 +36,7 @@ from ._version import SDK_NAME, SDK_VERSION
 from .client import DEFAULT_BASE_URL, Client, WorkflowsApiError
 from .protocol import PROTOCOL_VERSIONS
 from .protocol._codec import dumps_bytes
-from .protocol._ids import QUEUE_NAME, WORKER_ID, is_uuid
+from .protocol._ids import QUEUE_NAME, WORKER_ID, is_app_id
 from .protocol._validate import check_poll_request
 
 DEFAULT_LIVE_URL = "https://workflows-live.ezghcloud.com"
@@ -106,8 +106,8 @@ class Worker:
     ) -> None:
         self._cred = key_source(api_key)  # never in repr()
         self._reauthed = False  # an instance key the API refused is replaced once
-        if not is_uuid(app):
-            raise ValueError(f"app is the pull app's ID (a lowercase UUID); got {app!r}")
+        if not is_app_id(app):
+            raise ValueError(f"app is the pull app's ID (a lowercase UUID or wfa_…); got {app!r}")
         if not isinstance(queue, str) or not QUEUE_NAME.fullmatch(queue):
             raise ValueError(f"A queue matches ^[a-z0-9][a-z0-9-]{{0,62}}$; got {queue!r}")
         if not isinstance(max_tasks, int) or not 1 <= max_tasks <= MAX_POLL_TASKS:

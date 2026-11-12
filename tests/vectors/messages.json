@@ -838,6 +838,19 @@
         }
       },
       {
+        "app": "wfa_7m2k9q4x0a1b",
+        "queue": "default",
+        "maxTasks": 10,
+        "workerId": "w-1",
+        "protocolVersions": [
+          "1.1"
+        ],
+        "sdk": {
+          "name": "go",
+          "version": "0.1.0"
+        }
+      },
+      {
         "app": "0199a3d0-2b3c-7d4e-9f50-6b7c8d9e0f1a",
         "queue": "default",
         "maxTasks": 1,
